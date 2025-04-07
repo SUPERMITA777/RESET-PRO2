@@ -1,140 +1,209 @@
 "use client"
 
 import type React from "react"
-
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Textarea } from "@/components/ui/textarea"
 import { Plus, Pencil, Trash, Search } from "lucide-react"
+import { createSupabaseClient } from "@/lib/supabase/client"
+import { useToast } from "@/components/ui/use-toast"
 
-// Mock data for products
-const initialProducts = [
-  {
-    id: 1,
-    name: "Aceite de Masaje Relajante",
-    description: "Aceite esencial para masajes relajantes",
-    price: 2500,
-    stock: 15,
-  },
-  {
-    id: 2,
-    name: "Crema Hidratante Facial",
-    description: "Crema hidratante para todo tipo de piel",
-    price: 3200,
-    stock: 8,
-  },
-  {
-    id: 3,
-    name: "Exfoliante Corporal",
-    description: "Exfoliante natural para una piel suave",
-    price: 2800,
-    stock: 12,
-  },
-  {
-    id: 4,
-    name: "Mascarilla Facial de Arcilla",
-    description: "Mascarilla purificante para pieles grasas",
-    price: 1800,
-    stock: 20,
-  },
-  {
-    id: 5,
-    name: "Sérum Antiarrugas",
-    description: "Sérum concentrado para reducir líneas de expresión",
-    price: 4500,
-    stock: 5,
-  },
-]
+interface Product {
+  id: number
+  name: string
+  description: string
+  price: number
+  stock: number
+  category: string
+}
 
 export default function ProductsPage() {
-  const [products, setProducts] = useState(initialProducts)
+  const [products, setProducts] = useState<Product[]>([])
+  const [filteredProducts, setFilteredProducts] = useState<Product[]>([])
   const [isDialogOpen, setIsDialogOpen] = useState(false)
-  const [selectedProduct, setSelectedProduct] = useState<any | null>(null)
+  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null)
   const [searchTerm, setSearchTerm] = useState("")
+  const [isLoading, setIsLoading] = useState(true)
+  const { toast } = useToast()
 
-  // Handle open product dialog
-  const handleOpenProductDialog = (product: any = null) => {
-    setSelectedProduct(product)
+  // Load data
+  useEffect(() => {
+    loadProducts()
+  }, [])
+
+  // Load products from Supabase
+  const loadProducts = async () => {
+    try {
+      const supabase = createSupabaseClient()
+      const { data, error } = await supabase
+        .from('products')
+        .select('*')
+      
+      if (error) throw error
+
+      setProducts(data || [])
+      setFilteredProducts(data || [])
+    } catch (error) {
+      console.error('Error loading products:', error)
+      toast({
+        title: "Error",
+        description: "No se pudieron cargar los productos",
+        variant: "destructive",
+      })
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  // Filter products
+  useEffect(() => {
+    if (!searchTerm) {
+      setFilteredProducts(products)
+      return
+    }
+
+    const term = searchTerm.toLowerCase()
+    const filtered = products.filter(
+      (product) =>
+        product.name.toLowerCase().includes(term) ||
+        product.description.toLowerCase().includes(term) ||
+        product.category.toLowerCase().includes(term)
+    )
+    setFilteredProducts(filtered)
+  }, [products, searchTerm])
+
+  // Handle open dialog
+  const handleOpenDialog = (product?: Product) => {
+    setSelectedProduct(product || null)
     setIsDialogOpen(true)
   }
 
   // Handle save product
-  const handleSaveProduct = (e: React.FormEvent) => {
+  const handleSaveProduct = async (e: React.FormEvent) => {
     e.preventDefault()
+    setIsLoading(true)
 
-    const formData = new FormData(e.target as HTMLFormElement)
-    const name = formData.get("name") as string
-    const description = formData.get("description") as string
-    const price = Number(formData.get("price"))
-    const stock = Number(formData.get("stock"))
-
-    if (selectedProduct) {
-      // Update existing product
-      setProducts(
-        products.map((product) =>
-          product.id === selectedProduct.id
-            ? {
-                ...product,
-                name,
-                description,
-                price,
-                stock,
-              }
-            : product,
-        ),
-      )
-    } else {
-      // Create new product
-      const newProduct = {
-        id: Date.now(),
-        name,
-        description,
-        price,
-        stock,
+    try {
+      const supabase = createSupabaseClient()
+      const formData = new FormData(e.target as HTMLFormElement)
+      const productData = {
+        name: formData.get("name") as string,
+        description: formData.get("description") as string,
+        price: parseFloat(formData.get("price") as string),
+        stock: parseInt(formData.get("stock") as string),
+        category: formData.get("category") as string,
       }
 
-      setProducts([...products, newProduct])
-    }
+      if (selectedProduct) {
+        // Update existing product
+        const { error } = await supabase
+          .from('products')
+          .update(productData)
+          .eq('id', selectedProduct.id)
 
-    setIsDialogOpen(false)
+        if (error) throw error
+
+        // Update local state
+        setProducts(products.map(product => 
+          product.id === selectedProduct.id ? { ...product, ...productData } : product
+        ))
+
+        toast({
+          title: "Éxito",
+          description: "Producto actualizado correctamente",
+        })
+      } else {
+        // Create new product
+        const { data, error } = await supabase
+          .from('products')
+          .insert(productData)
+          .select()
+          .single()
+
+        if (error) throw error
+
+        // Update local state
+        setProducts([...products, data])
+
+        toast({
+          title: "Éxito",
+          description: "Producto creado correctamente",
+        })
+      }
+
+      setIsDialogOpen(false)
+    } catch (error) {
+      console.error('Error saving product:', error)
+      toast({
+        title: "Error",
+        description: "No se pudo guardar el producto",
+        variant: "destructive",
+      })
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   // Handle delete product
-  const handleDeleteProduct = (id: number) => {
-    setProducts(products.filter((product) => product.id !== id))
+  const handleDeleteProduct = async (id: number) => {
+    if (!confirm("¿Estás seguro de que deseas eliminar este producto?")) return
+    setIsLoading(true)
+
+    try {
+      const supabase = createSupabaseClient()
+      const { error } = await supabase
+        .from('products')
+        .delete()
+        .eq('id', id)
+
+      if (error) throw error
+
+      // Update local state
+      setProducts(products.filter(product => product.id !== id))
+
+      toast({
+        title: "Éxito",
+        description: "Producto eliminado correctamente",
+      })
+    } catch (error) {
+      console.error('Error deleting product:', error)
+      toast({
+        title: "Error",
+        description: "No se pudo eliminar el producto",
+        variant: "destructive",
+      })
+    } finally {
+      setIsLoading(false)
+    }
   }
 
-  // Filter products based on search term
-  const filteredProducts = products.filter(
-    (product) =>
-      product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      product.description.toLowerCase().includes(searchTerm.toLowerCase()),
-  )
+  if (isLoading) {
+    return <div className="flex justify-center items-center h-64">Cargando...</div>
+  }
 
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <h2 className="text-xl font-semibold">Gestión de Productos</h2>
-        <Button onClick={() => handleOpenProductDialog()}>
-          <Plus className="h-4 w-4 mr-2" />
-          Nuevo Producto
-        </Button>
-      </div>
-
-      <div className="flex items-center space-x-2">
-        <div className="relative flex-1">
-          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder="Buscar por nombre o descripción..."
-            className="pl-8"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-          />
+        <div className="flex gap-4">
+          <div className="flex items-center gap-2">
+            <Search className="h-4 w-4" />
+            <Input
+              placeholder="Buscar producto..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-64"
+            />
+          </div>
+          <Button onClick={() => handleOpenDialog()}>
+            <Plus className="h-4 w-4 mr-2" />
+            Nuevo Producto
+          </Button>
         </div>
       </div>
 
@@ -147,26 +216,32 @@ export default function ProductsPage() {
                 <TableHead>Descripción</TableHead>
                 <TableHead>Precio</TableHead>
                 <TableHead>Stock</TableHead>
+                <TableHead>Categoría</TableHead>
                 <TableHead className="text-right">Acciones</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {filteredProducts.map((product) => (
                 <TableRow key={product.id}>
-                  <TableCell className="font-medium">{product.name}</TableCell>
-                  <TableCell>
-                    <div className="max-w-xs truncate" title={product.description}>
-                      {product.description}
-                    </div>
-                  </TableCell>
-                  <TableCell>${product.price}</TableCell>
+                  <TableCell>{product.name}</TableCell>
+                  <TableCell>{product.description}</TableCell>
+                  <TableCell>${product.price.toFixed(2)}</TableCell>
                   <TableCell>{product.stock}</TableCell>
+                  <TableCell>{product.category}</TableCell>
                   <TableCell className="text-right">
                     <div className="flex justify-end gap-2">
-                      <Button variant="ghost" size="icon" onClick={() => handleOpenProductDialog(product)}>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => handleOpenDialog(product)}
+                      >
                         <Pencil className="h-4 w-4" />
                       </Button>
-                      <Button variant="ghost" size="icon" onClick={() => handleDeleteProduct(product.id)}>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => handleDeleteProduct(product.id)}
+                      >
                         <Trash className="h-4 w-4" />
                       </Button>
                     </div>
@@ -178,11 +253,13 @@ export default function ProductsPage() {
         </CardContent>
       </Card>
 
-      {/* Product Dialog */}
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <DialogContent>
+        <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>{selectedProduct ? "Editar Producto" : "Nuevo Producto"}</DialogTitle>
+            <DialogDescription>
+              {selectedProduct ? "Modifica los datos del producto" : "Ingresa los datos del nuevo producto"}
+            </DialogDescription>
           </DialogHeader>
 
           <form onSubmit={handleSaveProduct}>
@@ -192,8 +269,7 @@ export default function ProductsPage() {
                 <Input
                   id="name"
                   name="name"
-                  defaultValue={selectedProduct?.name || ""}
-                  placeholder="Nombre del producto"
+                  defaultValue={selectedProduct?.name}
                   required
                 />
               </div>
@@ -203,37 +279,42 @@ export default function ProductsPage() {
                 <Textarea
                   id="description"
                   name="description"
-                  defaultValue={selectedProduct?.description || ""}
+                  defaultValue={selectedProduct?.description}
                   placeholder="Descripción del producto"
-                  rows={3}
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div className="grid gap-2">
-                  <Label htmlFor="price">Precio</Label>
-                  <Input
-                    id="price"
-                    name="price"
-                    type="number"
-                    defaultValue={selectedProduct?.price || 0}
-                    min={0}
-                    step={100}
-                    required
-                  />
-                </div>
+              <div className="grid gap-2">
+                <Label htmlFor="price">Precio</Label>
+                <Input
+                  id="price"
+                  name="price"
+                  type="number"
+                  step="0.01"
+                  defaultValue={selectedProduct?.price}
+                  required
+                />
+              </div>
 
-                <div className="grid gap-2">
-                  <Label htmlFor="stock">Stock</Label>
-                  <Input
-                    id="stock"
-                    name="stock"
-                    type="number"
-                    defaultValue={selectedProduct?.stock || 0}
-                    min={0}
-                    required
-                  />
-                </div>
+              <div className="grid gap-2">
+                <Label htmlFor="stock">Stock</Label>
+                <Input
+                  id="stock"
+                  name="stock"
+                  type="number"
+                  defaultValue={selectedProduct?.stock}
+                  required
+                />
+              </div>
+
+              <div className="grid gap-2">
+                <Label htmlFor="category">Categoría</Label>
+                <Input
+                  id="category"
+                  name="category"
+                  defaultValue={selectedProduct?.category}
+                  required
+                />
               </div>
             </div>
 
@@ -241,7 +322,9 @@ export default function ProductsPage() {
               <Button type="button" variant="outline" onClick={() => setIsDialogOpen(false)}>
                 Cancelar
               </Button>
-              <Button type="submit">Guardar</Button>
+              <Button type="submit" disabled={isLoading}>
+                {isLoading ? "Guardando..." : "Guardar"}
+              </Button>
             </DialogFooter>
           </form>
         </DialogContent>

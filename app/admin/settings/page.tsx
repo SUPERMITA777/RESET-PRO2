@@ -16,6 +16,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert"
 // Importar getSupabaseClient al principio del archivo
 import { getSupabaseClient } from "@/lib/supabase/client"
 import { ConnectionStatus } from "@/components/connection-status"
+import { DatabaseMaintenance } from "@/components/database-maintenance"
 
 // Mock data for payment methods
 const initialPaymentMethods = [
@@ -147,6 +148,7 @@ export default function SettingsPage() {
           <TabsTrigger value="business">Información del Negocio</TabsTrigger>
           <TabsTrigger value="payment">Métodos de Pago</TabsTrigger>
           <TabsTrigger value="backup">Backup</TabsTrigger>
+          <TabsTrigger value="database">Base de Datos</TabsTrigger>
         </TabsList>
 
         <TabsContent value="business" className="space-y-4">
@@ -283,6 +285,11 @@ export default function SettingsPage() {
               </div>
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="database" className="space-y-4">
+          <ConnectionStatus />
+          <DatabaseMaintenance />
         </TabsContent>
       </Tabs>
 

@@ -1,50 +1,29 @@
 "use client"
 
 import type React from "react"
-
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Textarea } from "@/components/ui/textarea"
-import { Plus, Pencil, Trash } from "lucide-react"
+import { Plus, Pencil, Trash, Search } from "lucide-react"
+import { createSupabaseClient } from "@/lib/supabase/client"
+import { useToast } from "@/components/ui/use-toast"
 
-// Mock data for professionals
-const initialProfessionals = [
-  {
-    id: 1,
-    name: "Ana García",
-    specialty: "Masajista",
-    email: "ana.garcia@example.com",
-    phone: "123-456-7890",
-    schedule: {
-      Lunes: ["09:00", "10:00", "11:00", "12:00", "15:00", "16:00", "17:00"],
-      Martes: ["09:00", "10:00", "11:00", "12:00", "15:00", "16:00", "17:00"],
-      Miércoles: ["09:00", "10:00", "11:00", "12:00", "15:00", "16:00", "17:00"],
-      Jueves: ["09:00", "10:00", "11:00", "12:00", "15:00", "16:00", "17:00"],
-      Viernes: ["09:00", "10:00", "11:00", "12:00", "15:00", "16:00", "17:00"],
-    },
-    bio: "Especialista en masajes terapéuticos con más de 5 años de experiencia.",
-  },
-  {
-    id: 2,
-    name: "Carlos Rodríguez",
-    specialty: "Esteticista",
-    email: "carlos.rodriguez@example.com",
-    phone: "234-567-8901",
-    schedule: {
-      Lunes: ["13:00", "14:00", "15:00", "16:00", "17:00"],
-      Martes: ["13:00", "14:00", "15:00", "16:00", "17:00"],
-      Miércoles: ["13:00", "14:00", "15:00", "16:00", "17:00"],
-      Jueves: ["13:00", "14:00", "15:00", "16:00", "17:00"],
-      Viernes: ["13:00", "14:00", "15:00", "16:00", "17:00"],
-    },
-    bio: "Especialista en tratamientos faciales y corporales.",
-  },
-]
+interface Professional {
+  id: number
+  name: string
+  specialty: string
+  email: string
+  phone: string
+  bio: string
+  schedule: {
+    [key: string]: string[]
+  }
+}
 
 // Days of the week
 const daysOfWeek = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
@@ -57,74 +36,181 @@ const timeSlots = Array.from({ length: 19 }, (_, i) => {
 })
 
 export default function ProfessionalsPage() {
-  const [professionals, setProfessionals] = useState(initialProfessionals)
+  const [professionals, setProfessionals] = useState<Professional[]>([])
+  const [filteredProfessionals, setFilteredProfessionals] = useState<Professional[]>([])
   const [isDialogOpen, setIsDialogOpen] = useState(false)
-  const [selectedProfessional, setSelectedProfessional] = useState<any | null>(null)
+  const [selectedProfessional, setSelectedProfessional] = useState<Professional | null>(null)
+  const [searchTerm, setSearchTerm] = useState("")
   const [scheduleDialogOpen, setScheduleDialogOpen] = useState(false)
   const [selectedDay, setSelectedDay] = useState<string | null>(null)
   const [selectedTimes, setSelectedTimes] = useState<string[]>([])
+  const [isLoading, setIsLoading] = useState(true)
+  const { toast } = useToast()
 
-  // Handle open professional dialog
-  const handleOpenProfessionalDialog = (professional: any = null) => {
-    setSelectedProfessional(professional)
+  // Load data
+  useEffect(() => {
+    loadProfessionals()
+  }, [])
+
+  // Load professionals from Supabase
+  const loadProfessionals = async () => {
+    try {
+      const supabase = createSupabaseClient()
+      const { data, error } = await supabase
+        .from('professionals')
+        .select('*')
+      
+      if (error) throw error
+
+      setProfessionals(data || [])
+      setFilteredProfessionals(data || [])
+    } catch (error) {
+      console.error('Error loading professionals:', error)
+      toast({
+        title: "Error",
+        description: "No se pudieron cargar los profesionales",
+        variant: "destructive",
+      })
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  // Filter professionals
+  useEffect(() => {
+    if (!searchTerm) {
+      setFilteredProfessionals(professionals)
+      return
+    }
+
+    const term = searchTerm.toLowerCase()
+    const filtered = professionals.filter(
+      (professional) =>
+        professional.name.toLowerCase().includes(term) ||
+        professional.specialty.toLowerCase().includes(term) ||
+        professional.email.toLowerCase().includes(term) ||
+        professional.phone.includes(term)
+    )
+    setFilteredProfessionals(filtered)
+  }, [professionals, searchTerm])
+
+  // Handle open dialog
+  const handleOpenDialog = (professional?: Professional) => {
+    setSelectedProfessional(professional || null)
     setIsDialogOpen(true)
   }
 
   // Handle save professional
-  const handleSaveProfessional = (e: React.FormEvent) => {
+  const handleSaveProfessional = async (e: React.FormEvent) => {
     e.preventDefault()
+    setIsLoading(true)
 
-    const formData = new FormData(e.target as HTMLFormElement)
-    const name = formData.get("name") as string
-    const specialty = formData.get("specialty") as string
-    const email = formData.get("email") as string
-    const phone = formData.get("phone") as string
-    const bio = formData.get("bio") as string
-
-    if (selectedProfessional) {
-      // Update existing professional
-      setProfessionals(
-        professionals.map((professional) =>
-          professional.id === selectedProfessional.id
-            ? {
-                ...professional,
-                name,
-                specialty,
-                email,
-                phone,
-                bio,
-              }
-            : professional,
-        ),
-      )
-    } else {
-      // Create new professional
-      const newProfessional = {
-        id: Date.now(),
-        name,
-        specialty,
-        email,
-        phone,
-        bio,
-        schedule: {},
+    try {
+      const supabase = createSupabaseClient()
+      const formData = new FormData(e.target as HTMLFormElement)
+      const professionalData = {
+        name: formData.get("name") as string,
+        specialty: formData.get("specialty") as string,
+        email: formData.get("email") as string,
+        phone: formData.get("phone") as string,
+        bio: formData.get("bio") as string,
+        schedule: {
+          Lunes: [],
+          Martes: [],
+          Miércoles: [],
+          Jueves: [],
+          Viernes: []
+        }
       }
 
-      setProfessionals([...professionals, newProfessional])
-    }
+      if (selectedProfessional) {
+        // Update existing professional
+        const { error } = await supabase
+          .from('professionals')
+          .update(professionalData)
+          .eq('id', selectedProfessional.id)
 
-    setIsDialogOpen(false)
+        if (error) throw error
+
+        // Update local state
+        setProfessionals(professionals.map(professional => 
+          professional.id === selectedProfessional.id ? { ...professional, ...professionalData } : professional
+        ))
+
+        toast({
+          title: "Éxito",
+          description: "Profesional actualizado correctamente",
+        })
+      } else {
+        // Create new professional
+        const { data, error } = await supabase
+          .from('professionals')
+          .insert(professionalData)
+          .select()
+          .single()
+
+        if (error) throw error
+
+        // Update local state
+        setProfessionals([...professionals, data])
+
+        toast({
+          title: "Éxito",
+          description: "Profesional creado correctamente",
+        })
+      }
+
+      setIsDialogOpen(false)
+    } catch (error) {
+      console.error('Error saving professional:', error)
+      toast({
+        title: "Error",
+        description: "No se pudo guardar el profesional",
+        variant: "destructive",
+      })
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   // Handle delete professional
-  const handleDeleteProfessional = (id: number) => {
-    setProfessionals(professionals.filter((professional) => professional.id !== id))
+  const handleDeleteProfessional = async (id: number) => {
+    if (!confirm("¿Estás seguro de que deseas eliminar este profesional?")) return
+    setIsLoading(true)
+
+    try {
+      const supabase = createSupabaseClient()
+      const { error } = await supabase
+        .from('professionals')
+        .delete()
+        .eq('id', id)
+
+      if (error) throw error
+
+      // Update local state
+      setProfessionals(professionals.filter(professional => professional.id !== id))
+
+      toast({
+        title: "Éxito",
+        description: "Profesional eliminado correctamente",
+      })
+    } catch (error) {
+      console.error('Error deleting professional:', error)
+      toast({
+        title: "Error",
+        description: "No se pudo eliminar el profesional",
+        variant: "destructive",
+      })
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   // Handle open schedule dialog
   const handleOpenScheduleDialog = (professional: any, day: string) => {
     setSelectedProfessional(professional)
     setSelectedDay(day)
-    setSelectedTimes(professional.schedule[day] || [])
+    setSelectedTimes(professional.schedule?.[day] || [])
     setScheduleDialogOpen(true)
   }
 
@@ -138,24 +224,41 @@ export default function ProfessionalsPage() {
   }
 
   // Handle save schedule
-  const handleSaveSchedule = () => {
+  const handleSaveSchedule = async () => {
     if (!selectedProfessional || !selectedDay) return
 
-    setProfessionals(
-      professionals.map((professional) => {
-        if (professional.id !== selectedProfessional.id) return professional
+    try {
+      const supabase = createSupabaseClient()
+      const schedule = {
+        ...selectedProfessional.schedule,
+        [selectedDay]: selectedTimes,
+      }
 
-        return {
-          ...professional,
-          schedule: {
-            ...professional.schedule,
-            [selectedDay]: selectedTimes,
-          },
-        }
-      }),
-    )
+      const { error } = await supabase
+        .from('professionals')
+        .update({ schedule })
+        .eq('id', selectedProfessional.id)
 
-    setScheduleDialogOpen(false)
+      if (error) throw error
+
+      // Actualizar el estado local
+      setProfessionals(professionals.map(p => 
+        p.id === selectedProfessional.id ? { ...p, schedule } : p
+      ))
+
+      setScheduleDialogOpen(false)
+      toast({
+        title: "Éxito",
+        description: "Horario actualizado correctamente",
+      })
+    } catch (error) {
+      console.error('Error saving schedule:', error)
+      toast({
+        title: "Error",
+        description: "No se pudo guardar el horario",
+        variant: "destructive",
+      })
+    }
   }
 
   // Format schedule for display
@@ -168,14 +271,29 @@ export default function ProfessionalsPage() {
     return days.map((day) => `${day} (${schedule[day].length} horarios)`).join(", ")
   }
 
+  if (isLoading) {
+    return <div className="flex justify-center items-center h-64">Cargando...</div>
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <h2 className="text-xl font-semibold">Gestión de Profesionales</h2>
-        <Button onClick={() => handleOpenProfessionalDialog()}>
-          <Plus className="h-4 w-4 mr-2" />
-          Nuevo Profesional
-        </Button>
+        <div className="flex gap-4">
+          <div className="flex items-center gap-2">
+            <Search className="h-4 w-4" />
+            <Input
+              placeholder="Buscar profesional..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-64"
+            />
+          </div>
+          <Button onClick={() => handleOpenDialog()}>
+            <Plus className="h-4 w-4 mr-2" />
+            Nuevo Profesional
+          </Button>
+        </div>
       </div>
 
       <Card>
@@ -187,38 +305,36 @@ export default function ProfessionalsPage() {
                 <TableHead>Especialidad</TableHead>
                 <TableHead>Email</TableHead>
                 <TableHead>Teléfono</TableHead>
-                <TableHead>Horarios</TableHead>
+                <TableHead>Biografía</TableHead>
                 <TableHead className="text-right">Acciones</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {professionals.map((professional) => (
+              {filteredProfessionals.map((professional) => (
                 <TableRow key={professional.id}>
-                  <TableCell className="font-medium">{professional.name}</TableCell>
+                  <TableCell>{professional.name}</TableCell>
                   <TableCell>{professional.specialty}</TableCell>
                   <TableCell>{professional.email}</TableCell>
                   <TableCell>{professional.phone}</TableCell>
                   <TableCell>
-                    <div className="flex flex-wrap gap-1">
-                      {daysOfWeek.map((day) => (
-                        <Button
-                          key={day}
-                          variant="outline"
-                          size="sm"
-                          className="text-xs h-7"
-                          onClick={() => handleOpenScheduleDialog(professional, day)}
-                        >
-                          {day.substring(0, 3)}
-                        </Button>
-                      ))}
+                    <div className="max-w-xs truncate" title={professional.bio}>
+                      {professional.bio}
                     </div>
                   </TableCell>
                   <TableCell className="text-right">
                     <div className="flex justify-end gap-2">
-                      <Button variant="ghost" size="icon" onClick={() => handleOpenProfessionalDialog(professional)}>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => handleOpenDialog(professional)}
+                      >
                         <Pencil className="h-4 w-4" />
                       </Button>
-                      <Button variant="ghost" size="icon" onClick={() => handleDeleteProfessional(professional.id)}>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => handleDeleteProfessional(professional.id)}
+                      >
                         <Trash className="h-4 w-4" />
                       </Button>
                     </div>
@@ -230,11 +346,13 @@ export default function ProfessionalsPage() {
         </CardContent>
       </Card>
 
-      {/* Professional Dialog */}
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <DialogContent>
+        <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>{selectedProfessional ? "Editar Profesional" : "Nuevo Profesional"}</DialogTitle>
+            <DialogDescription>
+              {selectedProfessional ? "Modifica los datos del profesional" : "Ingresa los datos del nuevo profesional"}
+            </DialogDescription>
           </DialogHeader>
 
           <form onSubmit={handleSaveProfessional}>
@@ -244,8 +362,7 @@ export default function ProfessionalsPage() {
                 <Input
                   id="name"
                   name="name"
-                  defaultValue={selectedProfessional?.name || ""}
-                  placeholder="Nombre completo"
+                  defaultValue={selectedProfessional?.name}
                   required
                 />
               </div>
@@ -255,8 +372,7 @@ export default function ProfessionalsPage() {
                 <Input
                   id="specialty"
                   name="specialty"
-                  defaultValue={selectedProfessional?.specialty || ""}
-                  placeholder="Especialidad"
+                  defaultValue={selectedProfessional?.specialty}
                   required
                 />
               </div>
@@ -267,8 +383,8 @@ export default function ProfessionalsPage() {
                   id="email"
                   name="email"
                   type="email"
-                  defaultValue={selectedProfessional?.email || ""}
-                  placeholder="correo@ejemplo.com"
+                  defaultValue={selectedProfessional?.email}
+                  required
                 />
               </div>
 
@@ -277,8 +393,8 @@ export default function ProfessionalsPage() {
                 <Input
                   id="phone"
                   name="phone"
-                  defaultValue={selectedProfessional?.phone || ""}
-                  placeholder="Teléfono de contacto"
+                  defaultValue={selectedProfessional?.phone}
+                  required
                 />
               </div>
 
@@ -287,8 +403,8 @@ export default function ProfessionalsPage() {
                 <Textarea
                   id="bio"
                   name="bio"
-                  defaultValue={selectedProfessional?.bio || ""}
-                  placeholder="Información sobre el profesional"
+                  defaultValue={selectedProfessional?.bio}
+                  placeholder="Biografía del profesional"
                 />
               </div>
             </div>
@@ -297,7 +413,9 @@ export default function ProfessionalsPage() {
               <Button type="button" variant="outline" onClick={() => setIsDialogOpen(false)}>
                 Cancelar
               </Button>
-              <Button type="submit">Guardar</Button>
+              <Button type="submit" disabled={isLoading}>
+                {isLoading ? "Guardando..." : "Guardar"}
+              </Button>
             </DialogFooter>
           </form>
         </DialogContent>
@@ -310,6 +428,9 @@ export default function ProfessionalsPage() {
             <DialogTitle>
               {selectedProfessional?.name} - Horarios {selectedDay}
             </DialogTitle>
+            <DialogDescription>
+              Selecciona los horarios disponibles para este día
+            </DialogDescription>
           </DialogHeader>
 
           <div className="py-4">

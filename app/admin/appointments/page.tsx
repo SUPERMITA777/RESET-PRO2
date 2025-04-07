@@ -7,22 +7,14 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
-import { Search, Filter, DollarSign, Trash } from "lucide-react"
-import {
-  db,
-  type Appointment,
-  type Client,
-  type Treatment,
-  type Sale,
-  type SaleItem,
-  type Product,
-  type PaymentMethod,
-} from "@/lib/database"
+import { Search, Filter, DollarSign, Trash, Pencil, Plus } from "lucide-react"
+import { createSupabaseClient } from "@/lib/supabase/client"
+import { useToast } from "@/components/ui/use-toast"
 
 // Status color mapping
 const statusColors: Record<string, string> = {
@@ -33,12 +25,90 @@ const statusColors: Record<string, string> = {
   canceled: "bg-red-100 text-red-800",
 }
 
+interface Appointment {
+  id: number
+  date: string
+  time: string
+  client_id: number
+  professional_id: number
+  treatment_id: number
+  subtreatment_id: number
+  box: string
+  status: string
+  deposit: number
+  price: number
+  notes: string
+}
+
+interface Client {
+  id: number
+  name: string
+  phone: string
+  email: string
+  history: string
+  last_visit: string
+}
+
+interface Professional {
+  id: number
+  name: string
+  specialty: string
+}
+
+interface Treatment {
+  id: number
+  name: string
+  description: string
+  duration: number
+  subtreatments: Subtreatment[]
+}
+
+interface Subtreatment {
+  id: number
+  treatment_id: number
+  name: string
+  description: string
+  duration: number
+  price: number
+}
+
+interface SaleItem {
+  id: number
+  type: "treatment" | "product"
+  itemId: number
+  quantity: number
+  price: number
+  name: string
+}
+
+interface Sale {
+  id: number
+  date: string
+  client_id: number
+  appointment_id: number
+  items: SaleItem[]
+  total: number
+  payments: {
+    id: number
+    sale_id: number
+    method: string
+    amount: number
+  }[]
+  completed: boolean
+}
+
+interface PaymentMethod {
+  id: number
+  name: string
+}
+
 export default function AppointmentsPage() {
   const [appointments, setAppointments] = useState<Appointment[]>([])
   const [filteredAppointments, setFilteredAppointments] = useState<Appointment[]>([])
   const [clients, setClients] = useState<Client[]>([])
+  const [professionals, setProfessionals] = useState<Professional[]>([])
   const [treatments, setTreatments] = useState<Treatment[]>([])
-  const [products, setProducts] = useState<Product[]>([])
+  const [products, setProducts] = useState<any[]>([])
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([])
   const [filterDate, setFilterDate] = useState<string>(new Date().toISOString().split("T")[0])
   const [isDialogOpen, setIsDialogOpen] = useState(false)
@@ -47,37 +117,117 @@ export default function AppointmentsPage() {
   const [cartItems, setCartItems] = useState<SaleItem[]>([])
   const [selectedPaymentMethods, setSelectedPaymentMethods] = useState<{ method: string; amount: number }[]>([])
   const [searchTerm, setSearchTerm] = useState("")
+  const [isLoading, setIsLoading] = useState(true)
+  const { toast } = useToast()
 
   // Load data
   useEffect(() => {
-    setAppointments(db.getAppointments())
-    setClients(db.getClients())
-    setTreatments(db.getTreatments())
-    setProducts(db.getProducts())
-    setPaymentMethods(db.getPaymentMethods())
+    loadData()
   }, [])
+
+  // Load all data from Supabase
+  const loadData = async () => {
+    try {
+      const supabase = createSupabaseClient()
+      
+      // Load appointments
+      const { data: appointmentsData, error: appointmentsError } = await supabase
+        .from('appointments')
+        .select('*')
+      
+      if (appointmentsError) throw appointmentsError
+
+      // Load clients
+      const { data: clientsData, error: clientsError } = await supabase
+        .from('clients')
+        .select('*')
+      
+      if (clientsError) throw clientsError
+
+      // Load professionals
+      const { data: professionalsData, error: professionalsError } = await supabase
+        .from('professionals')
+        .select('*')
+      
+      if (professionalsError) throw professionalsError
+
+      // Load treatments
+      const { data: treatmentsData, error: treatmentsError } = await supabase
+        .from('treatments')
+        .select('*')
+      
+      if (treatmentsError) throw treatmentsError
+
+      // Load subtreatments
+      const { data: subtreatmentsData, error: subtreatmentsError } = await supabase
+        .from('subtreatments')
+        .select('*')
+      
+      if (subtreatmentsError) throw subtreatmentsError
+
+      // Load products
+      const { data: productsData, error: productsError } = await supabase
+        .from('products')
+        .select('*')
+      
+      if (productsError) throw productsError
+
+      // Load payment methods
+      const { data: paymentMethodsData, error: paymentMethodsError } = await supabase
+        .from('payment_methods')
+        .select('*')
+      
+      if (paymentMethodsError) throw paymentMethodsError
+
+      // Combinar tratamientos con sus subtratamientos
+      const combinedTreatments = treatmentsData.map(treatment => ({
+        ...treatment,
+        subtreatments: subtreatmentsData.filter(st => st.treatment_id === treatment.id)
+      }))
+
+      setAppointments(appointmentsData)
+      setFilteredAppointments(appointmentsData)
+      setClients(clientsData)
+      setProfessionals(professionalsData)
+      setTreatments(combinedTreatments)
+      setProducts(productsData)
+      setPaymentMethods(paymentMethodsData)
+    } catch (error) {
+      console.error('Error loading data:', error)
+      toast({
+        title: "Error",
+        description: "No se pudieron cargar los datos",
+        variant: "destructive",
+      })
+    } finally {
+      setIsLoading(false)
+    }
+  }
 
   // Filter appointments
   useEffect(() => {
-    let filtered = appointments
-
-    // Filter by date
-    if (filterDate) {
-      filtered = filtered.filter((app) => app.date === filterDate)
+    if (!searchTerm) {
+      setFilteredAppointments(appointments)
+      return
     }
 
-    // Filter by search term
-    if (searchTerm) {
-      const term = searchTerm.toLowerCase()
-      filtered = filtered.filter((app) => {
-        const client = clients.find((c) => c.id === app.clientId)
-        if (!client) return false
-        return client.name.toLowerCase().includes(term) || client.phone.includes(term)
-      })
-    }
+    const term = searchTerm.toLowerCase()
+    const filtered = appointments.filter((appointment) => {
+      const client = clients.find(c => c.id === appointment.client_id)
+      const professional = professionals.find(p => p.id === appointment.professional_id)
+      const treatment = treatments.find(t => t.id === appointment.treatment_id)
 
+      return (
+        client?.name.toLowerCase().includes(term) ||
+        professional?.name.toLowerCase().includes(term) ||
+        treatment?.name.toLowerCase().includes(term) ||
+        appointment.date.includes(term) ||
+        appointment.time.includes(term) ||
+        appointment.status.toLowerCase().includes(term)
+      )
+    })
     setFilteredAppointments(filtered)
-  }, [appointments, filterDate, searchTerm, clients])
+  }, [appointments, clients, professionals, treatments, searchTerm])
 
   // Handle open appointment dialog
   const handleOpenAppointmentDialog = (appointment: Appointment) => {
@@ -86,38 +236,57 @@ export default function AppointmentsPage() {
   }
 
   // Handle save appointment
-  const handleSaveAppointment = (e: React.FormEvent) => {
+  const handleSaveAppointment = async (e: React.FormEvent) => {
     e.preventDefault()
-
     if (!selectedAppointment) return
+    setIsLoading(true)
 
-    const formData = new FormData(e.target as HTMLFormElement)
-    const clientId = Number(formData.get("clientId"))
-    const treatmentId = Number(formData.get("treatmentId"))
-    const subtreatmentId = Number(formData.get("subtreatmentId"))
-    const status = formData.get("status") as string
-    const deposit = Number(formData.get("deposit"))
-    const notes = formData.get("notes") as string
+    try {
+      const supabase = createSupabaseClient()
+      const formData = new FormData(e.target as HTMLFormElement)
+      const appointmentData = {
+        client_id: Number(formData.get("clientId")),
+        professional_id: Number(formData.get("professionalId")),
+        treatment_id: Number(formData.get("treatmentId")),
+        date: formData.get("date") as string,
+        time: formData.get("time") as string,
+        status: formData.get("status") as string,
+        notes: formData.get("notes") as string,
+      }
 
-    // Get price from subtreatment
-    const treatment = treatments.find((t) => t.id === treatmentId)
-    const subtreatment = treatment?.subtreatments.find((s) => s.id === subtreatmentId)
-    const price = subtreatment?.price || 0
+      // Get price from subtreatment
+      const treatment = treatments.find((t) => t.id === appointmentData.treatment_id)
+      const subtreatment = treatment?.subtreatments.find((s) => s.id === appointmentData.subtreatment_id)
+      const price = subtreatment?.price || 0
 
-    const updatedAppointment = {
-      ...selectedAppointment,
-      clientId,
-      treatmentId,
-      subtreatmentId,
-      status,
-      deposit,
-      price,
-      notes,
+      const { error } = await supabase
+        .from('appointments')
+        .update({ ...appointmentData, price })
+        .eq('id', selectedAppointment.id)
+
+      if (error) throw error
+
+      // Actualizar el estado local
+      setAppointments(appointments.map(app => 
+        app.id === selectedAppointment.id ? { ...app, ...appointmentData, price } : app
+      ))
+
+      toast({
+        title: "Éxito",
+        description: "Cita actualizada correctamente",
+      })
+
+      setIsDialogOpen(false)
+    } catch (error) {
+      console.error('Error saving appointment:', error)
+      toast({
+        title: "Error",
+        description: "No se pudo guardar la cita",
+        variant: "destructive",
+      })
+    } finally {
+      setIsLoading(false)
     }
-
-    setAppointments(appointments.map((app) => (app.id === selectedAppointment.id ? updatedAppointment : app)))
-
-    setIsDialogOpen(false)
   }
 
   // Handle open cart dialog
@@ -125,8 +294,8 @@ export default function AppointmentsPage() {
     setSelectedAppointment(appointment)
 
     // Initialize cart with the appointment's treatment
-    const treatment = treatments.find((t) => t.id === appointment.treatmentId)
-    const subtreatment = treatment?.subtreatments.find((s) => s.id === appointment.subtreatmentId)
+    const treatment = treatments.find((t) => t.id === appointment.treatment_id)
+    const subtreatment = treatment?.subtreatments.find((s) => s.id === appointment.subtreatment_id)
 
     if (subtreatment) {
       setCartItems([
@@ -154,70 +323,6 @@ export default function AppointmentsPage() {
     setIsCartDialogOpen(true)
   }
 
-  // Handle add product to cart
-  const handleAddProductToCart = (productId: number) => {
-    const product = products.find((p) => p.id === productId)
-    if (!product) return
-
-    setCartItems([
-      ...cartItems,
-      {
-        id: Date.now(),
-        type: "product",
-        itemId: product.id,
-        quantity: 1,
-        price: product.price,
-        name: product.name,
-      },
-    ])
-  }
-
-  // Handle add treatment to cart
-  const handleAddTreatmentToCart = (treatmentId: number, subtreatmentId: number) => {
-    const treatment = treatments.find((t) => t.id === treatmentId)
-    const subtreatment = treatment?.subtreatments.find((s) => s.id === subtreatmentId)
-    if (!subtreatment) return
-
-    setCartItems([
-      ...cartItems,
-      {
-        id: Date.now(),
-        type: "treatment",
-        itemId: subtreatment.id,
-        quantity: 1,
-        price: subtreatment.price,
-        name: subtreatment.name,
-      },
-    ])
-  }
-
-  // Handle remove item from cart
-  const handleRemoveCartItem = (itemId: number) => {
-    setCartItems(cartItems.filter((item) => item.id !== itemId))
-  }
-
-  // Handle update item quantity
-  const handleUpdateCartItemQuantity = (itemId: number, quantity: number) => {
-    setCartItems(cartItems.map((item) => (item.id === itemId ? { ...item, quantity } : item)))
-  }
-
-  // Handle add payment method
-  const handleAddPaymentMethod = () => {
-    setSelectedPaymentMethods([...selectedPaymentMethods, { method: paymentMethods[0]?.name || "Efectivo", amount: 0 }])
-  }
-
-  // Handle update payment method
-  const handleUpdatePaymentMethod = (index: number, method: string, amount: number) => {
-    const updated = [...selectedPaymentMethods]
-    updated[index] = { method, amount }
-    setSelectedPaymentMethods(updated)
-  }
-
-  // Handle remove payment method
-  const handleRemovePaymentMethod = (index: number) => {
-    setSelectedPaymentMethods(selectedPaymentMethods.filter((_, i) => i !== index))
-  }
-
   // Calculate cart total
   const calculateCartTotal = () => {
     return cartItems.reduce((total, item) => total + item.price * item.quantity, 0)
@@ -236,37 +341,73 @@ export default function AppointmentsPage() {
   }
 
   // Handle complete sale
-  const handleCompleteSale = () => {
+  const handleCompleteSale = async () => {
     if (!selectedAppointment) return
+    setIsLoading(true)
 
-    // Create sale
-    const sale: Omit<Sale, "id"> = {
-      date: new Date().toISOString().split("T")[0],
-      clientId: selectedAppointment.clientId,
-      appointmentId: selectedAppointment.id,
-      items: cartItems,
-      total: calculateCartTotal(),
-      payments: selectedPaymentMethods.map((payment, index) => ({
-        id: Date.now() + index,
-        saleId: 0, // Will be set by the database
+    try {
+      const supabase = createSupabaseClient()
+      
+      // Crear venta
+      const saleData = {
+        date: new Date().toISOString().split("T")[0],
+        client_id: selectedAppointment.client_id,
+        appointment_id: selectedAppointment.id,
+        items: cartItems,
+        total: calculateCartTotal(),
+        completed: true,
+      }
+
+      const { data: sale, error: saleError } = await supabase
+        .from('sales')
+        .insert(saleData)
+        .select()
+        .single()
+
+      if (saleError) throw saleError
+
+      // Crear pagos
+      const paymentsData = selectedPaymentMethods.map(payment => ({
+        sale_id: sale.id,
         method: payment.method,
         amount: payment.amount,
-      })),
-      completed: true,
+      }))
+
+      const { error: paymentsError } = await supabase
+        .from('sale_payments')
+        .insert(paymentsData)
+
+      if (paymentsError) throw paymentsError
+
+      // Actualizar estado de la cita
+      const { error: appointmentError } = await supabase
+        .from('appointments')
+        .update({ status: 'completed' })
+        .eq('id', selectedAppointment.id)
+
+      if (appointmentError) throw appointmentError
+
+      // Actualizar estado local
+      setAppointments(appointments.map(app => 
+        app.id === selectedAppointment.id ? { ...app, status: 'completed' } : app
+      ))
+
+      toast({
+        title: "Éxito",
+        description: "Venta completada correctamente",
+      })
+
+      setIsCartDialogOpen(false)
+    } catch (error) {
+      console.error('Error completing sale:', error)
+      toast({
+        title: "Error",
+        description: "No se pudo completar la venta",
+        variant: "destructive",
+      })
+    } finally {
+      setIsLoading(false)
     }
-
-    // Update appointment status to completed
-    const updatedAppointment = {
-      ...selectedAppointment,
-      status: "completed",
-    }
-
-    setAppointments(appointments.map((app) => (app.id === selectedAppointment.id ? updatedAppointment : app)))
-
-    // In a real app, you would save the sale to the database
-    console.log("Sale completed:", sale)
-
-    setIsCartDialogOpen(false)
   }
 
   // Get client name
@@ -275,38 +416,28 @@ export default function AppointmentsPage() {
     return client ? client.name : "Cliente desconocido"
   }
 
-  // Get treatment name
-  const getTreatmentName = (treatmentId: number, subtreatmentId: number) => {
-    const treatment = treatments.find((t) => t.id === treatmentId)
-    if (!treatment) return "Tratamiento desconocido"
-
-    const subtreatment = treatment.subtreatments.find((s) => s.id === subtreatmentId)
-    return subtreatment ? subtreatment.name : "Subtratamiento desconocido"
+  if (isLoading) {
+    return <div className="flex justify-center items-center h-64">Cargando...</div>
   }
 
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
-        <h2 className="text-xl font-semibold">Gestión de Turnos</h2>
-        <div className="flex items-center space-x-2">
-          <div className="relative">
-            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+        <h2 className="text-xl font-semibold">Gestión de Citas</h2>
+        <div className="flex gap-4">
+          <div className="flex items-center gap-2">
+            <Search className="h-4 w-4" />
             <Input
-              placeholder="Buscar por cliente..."
-              className="pl-8 w-[200px]"
+              placeholder="Buscar cita..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-64"
             />
           </div>
-          <div className="flex items-center space-x-2">
-            <Filter className="h-4 w-4 text-muted-foreground" />
-            <Input
-              type="date"
-              value={filterDate}
-              onChange={(e) => setFilterDate(e.target.value)}
-              className="w-[150px]"
-            />
-          </div>
+          <Button onClick={() => handleOpenAppointmentDialog(null as any)}>
+            <Plus className="h-4 w-4 mr-2" />
+            Nueva Cita
+          </Button>
         </div>
       </div>
 
@@ -315,85 +446,88 @@ export default function AppointmentsPage() {
           <Table>
             <TableHeader>
               <TableRow>
+                <TableHead>Cliente</TableHead>
+                <TableHead>Profesional</TableHead>
+                <TableHead>Tratamiento</TableHead>
                 <TableHead>Fecha</TableHead>
                 <TableHead>Hora</TableHead>
-                <TableHead>Cliente</TableHead>
-                <TableHead>Tratamiento</TableHead>
-                <TableHead>Box</TableHead>
                 <TableHead>Estado</TableHead>
-                <TableHead>Precio</TableHead>
-                <TableHead>Seña</TableHead>
+                <TableHead>Notas</TableHead>
                 <TableHead className="text-right">Acciones</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filteredAppointments.map((appointment) => (
-                <TableRow key={appointment.id}>
-                  <TableCell>{appointment.date}</TableCell>
-                  <TableCell>{appointment.time}</TableCell>
-                  <TableCell>{getClientName(appointment.clientId)}</TableCell>
-                  <TableCell>{getTreatmentName(appointment.treatmentId, appointment.subtreatmentId)}</TableCell>
-                  <TableCell>{appointment.box}</TableCell>
-                  <TableCell>
-                    <Badge className={statusColors[appointment.status]}>
-                      {appointment.status === "pending" && "Reservado"}
-                      {appointment.status === "confirmed" && "Confirmado"}
-                      {appointment.status === "completed" && "Completado"}
-                      {appointment.status === "canceled" && "Cancelado"}
-                      {appointment.status === "available" && "Disponible"}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>${appointment.price}</TableCell>
-                  <TableCell>${appointment.deposit}</TableCell>
-                  <TableCell className="text-right">
-                    <div className="flex justify-end gap-2">
-                      <Button variant="outline" size="sm" onClick={() => handleOpenAppointmentDialog(appointment)}>
-                        Editar
-                      </Button>
-                      {(appointment.status === "pending" || appointment.status === "confirmed") && (
+              {filteredAppointments.map((appointment) => {
+                const client = clients.find(c => c.id === appointment.client_id)
+                const professional = professionals.find(p => p.id === appointment.professional_id)
+                const treatment = treatments.find(t => t.id === appointment.treatment_id)
+
+                return (
+                  <TableRow key={appointment.id}>
+                    <TableCell>{client?.name}</TableCell>
+                    <TableCell>{professional?.name}</TableCell>
+                    <TableCell>{treatment?.name}</TableCell>
+                    <TableCell>{appointment.date}</TableCell>
+                    <TableCell>{appointment.time}</TableCell>
+                    <TableCell>
+                      <Badge className={statusColors[appointment.status]}>
+                        {appointment.status === "pending"
+                          ? "Reservado"
+                          : appointment.status === "confirmed"
+                          ? "Confirmado"
+                          : appointment.status === "completed"
+                          ? "Completado"
+                          : "Cancelado"}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <div className="max-w-xs truncate" title={appointment.notes}>
+                        {appointment.notes}
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex justify-end gap-2">
                         <Button
-                          variant="outline"
-                          size="sm"
-                          className="bg-green-50 text-green-600 hover:bg-green-100 hover:text-green-700"
-                          onClick={() => handleOpenCartDialog(appointment)}
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => handleOpenAppointmentDialog(appointment)}
                         >
-                          <DollarSign className="h-4 w-4 mr-1" />
-                          Cobrar
+                          <Pencil className="h-4 w-4" />
                         </Button>
-                      )}
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
+                        {appointment.status !== "completed" && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => handleOpenCartDialog(appointment)}
+                          >
+                            <DollarSign className="h-4 w-4" />
+                          </Button>
+                        )}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                )
+              })}
             </TableBody>
           </Table>
         </CardContent>
       </Card>
 
-      {/* Appointment Dialog */}
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>Editar Turno</DialogTitle>
+            <DialogTitle>{selectedAppointment ? "Editar Cita" : "Nueva Cita"}</DialogTitle>
+            <DialogDescription>
+              {selectedAppointment ? "Modifica los datos de la cita" : "Ingresa los datos de la nueva cita"}
+            </DialogDescription>
           </DialogHeader>
 
           {selectedAppointment && (
             <form onSubmit={handleSaveAppointment}>
               <div className="grid gap-4 py-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <Label>Fecha</Label>
-                    <Input value={selectedAppointment.date} readOnly />
-                  </div>
-                  <div>
-                    <Label>Hora</Label>
-                    <Input value={selectedAppointment.time} readOnly />
-                  </div>
-                </div>
-
                 <div className="grid gap-2">
                   <Label htmlFor="clientId">Cliente</Label>
-                  <Select name="clientId" defaultValue={selectedAppointment.clientId.toString()}>
+                  <Select name="clientId" defaultValue={selectedAppointment.client_id.toString()}>
                     <SelectTrigger>
                       <SelectValue placeholder="Seleccionar cliente" />
                     </SelectTrigger>
@@ -408,8 +542,24 @@ export default function AppointmentsPage() {
                 </div>
 
                 <div className="grid gap-2">
+                  <Label htmlFor="professionalId">Profesional</Label>
+                  <Select name="professionalId" defaultValue={selectedAppointment.professional_id.toString()}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Seleccionar profesional" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {professionals.map((professional) => (
+                        <SelectItem key={professional.id} value={professional.id.toString()}>
+                          {professional.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="grid gap-2">
                   <Label htmlFor="treatmentId">Tratamiento</Label>
-                  <Select name="treatmentId" defaultValue={selectedAppointment.treatmentId.toString()}>
+                  <Select name="treatmentId" defaultValue={selectedAppointment.treatment_id.toString()}>
                     <SelectTrigger>
                       <SelectValue placeholder="Seleccionar tratamiento" />
                     </SelectTrigger>
@@ -424,62 +574,49 @@ export default function AppointmentsPage() {
                 </div>
 
                 <div className="grid gap-2">
-                  <Label htmlFor="subtreatmentId">Subtratamiento</Label>
-                  <Select name="subtreatmentId" defaultValue={selectedAppointment.subtreatmentId.toString()}>
+                  <Label htmlFor="date">Fecha</Label>
+                  <Input
+                    id="date"
+                    name="date"
+                    type="date"
+                    defaultValue={selectedAppointment?.date}
+                    required
+                  />
+                </div>
+
+                <div className="grid gap-2">
+                  <Label htmlFor="time">Hora</Label>
+                  <Input
+                    id="time"
+                    name="time"
+                    type="time"
+                    defaultValue={selectedAppointment?.time}
+                    required
+                  />
+                </div>
+
+                <div className="grid gap-2">
+                  <Label htmlFor="status">Estado</Label>
+                  <Select name="status" defaultValue={selectedAppointment?.status}>
                     <SelectTrigger>
-                      <SelectValue placeholder="Seleccionar subtratamiento" />
+                      <SelectValue placeholder="Seleccionar estado" />
                     </SelectTrigger>
                     <SelectContent>
-                      {treatments
-                        .find((t) => t.id === selectedAppointment.treatmentId)
-                        ?.subtreatments.map((subtreatment) => (
-                          <SelectItem key={subtreatment.id} value={subtreatment.id.toString()}>
-                            {subtreatment.name} - ${subtreatment.price}
-                          </SelectItem>
-                        ))}
+                      <SelectItem value="pending">Reservado</SelectItem>
+                      <SelectItem value="confirmed">Confirmado</SelectItem>
+                      <SelectItem value="completed">Completado</SelectItem>
+                      <SelectItem value="canceled">Cancelado</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
 
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <Label htmlFor="box">Box</Label>
-                    <Input id="box" name="box" defaultValue={selectedAppointment.box} readOnly />
-                  </div>
-                  <div>
-                    <Label htmlFor="status">Estado</Label>
-                    <Select name="status" defaultValue={selectedAppointment.status}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Seleccionar estado" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="pending">Reservado</SelectItem>
-                        <SelectItem value="confirmed">Confirmado</SelectItem>
-                        <SelectItem value="completed">Completado</SelectItem>
-                        <SelectItem value="canceled">Cancelado</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <Label htmlFor="deposit">Seña</Label>
-                    <Input id="deposit" name="deposit" type="number" defaultValue={selectedAppointment.deposit} />
-                  </div>
-                  <div>
-                    <Label htmlFor="price">Precio</Label>
-                    <Input id="price" name="price" type="number" defaultValue={selectedAppointment.price} readOnly />
-                  </div>
-                </div>
-
                 <div className="grid gap-2">
-                  <Label htmlFor="notes">Observaciones</Label>
+                  <Label htmlFor="notes">Notas</Label>
                   <Textarea
                     id="notes"
                     name="notes"
-                    defaultValue={selectedAppointment.notes}
-                    placeholder="Notas adicionales"
+                    defaultValue={selectedAppointment?.notes}
+                    placeholder="Notas sobre la cita"
                   />
                 </div>
               </div>
@@ -488,7 +625,9 @@ export default function AppointmentsPage() {
                 <Button type="button" variant="outline" onClick={() => setIsDialogOpen(false)}>
                   Cancelar
                 </Button>
-                <Button type="submit">Guardar</Button>
+                <Button type="submit" disabled={isLoading}>
+                  {isLoading ? "Guardando..." : "Guardar"}
+                </Button>
               </DialogFooter>
             </form>
           )}
@@ -500,6 +639,9 @@ export default function AppointmentsPage() {
         <DialogContent className="max-w-4xl">
           <DialogHeader>
             <DialogTitle>Carrito de Compras</DialogTitle>
+            <DialogDescription>
+              Completa la venta del turno
+            </DialogDescription>
           </DialogHeader>
 
           {selectedAppointment && (
@@ -507,159 +649,34 @@ export default function AppointmentsPage() {
               <div className="grid md:grid-cols-2 gap-6">
                 <div>
                   <h3 className="text-lg font-semibold mb-4">Detalles del Turno</h3>
-                  <div className="grid gap-2">
-                    <div className="flex justify-between">
-                      <span className="font-medium">Cliente:</span>
-                      <span>{getClientName(selectedAppointment.clientId)}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="font-medium">Fecha:</span>
-                      <span>{selectedAppointment.date}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="font-medium">Hora:</span>
-                      <span>{selectedAppointment.time}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="font-medium">Tratamiento:</span>
-                      <span>
-                        {getTreatmentName(selectedAppointment.treatmentId, selectedAppointment.subtreatmentId)}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="font-medium">Box:</span>
-                      <span>{selectedAppointment.box}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="font-medium">Seña:</span>
-                      <span>${selectedAppointment.deposit}</span>
-                    </div>
+                  <div className="space-y-2">
+                    <p>
+                      <span className="font-medium">Cliente:</span> {getClientName(selectedAppointment.client_id)}
+                    </p>
+                    <p>
+                      <span className="font-medium">Fecha:</span> {selectedAppointment.date}
+                    </p>
+                    <p>
+                      <span className="font-medium">Hora:</span> {selectedAppointment.time}
+                    </p>
+                    <p>
+                      <span className="font-medium">Box:</span> {selectedAppointment.box}
+                    </p>
                   </div>
                 </div>
 
                 <div>
-                  <h3 className="text-lg font-semibold mb-4">Agregar Productos/Tratamientos</h3>
-                  <div className="grid gap-4">
+                  <h3 className="text-lg font-semibold mb-4">Resumen de Pagos</h3>
+                  <div className="space-y-4">
                     <div>
-                      <Label htmlFor="addProduct">Agregar Producto</Label>
-                      <div className="flex gap-2">
-                        <Select onValueChange={(value) => handleAddProductToCart(Number(value))}>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Seleccionar producto" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {products.map((product) => (
-                              <SelectItem key={product.id} value={product.id.toString()}>
-                                {product.name} - ${product.price}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
+                      <Label>Total: ${calculateCartTotal()}</Label>
                     </div>
-
                     <div>
-                      <Label htmlFor="addTreatment">Agregar Tratamiento</Label>
-                      <div className="grid gap-2">
-                        <Select id="treatmentSelect">
-                          <SelectTrigger>
-                            <SelectValue placeholder="Seleccionar tratamiento" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {treatments.map((treatment) => (
-                              <SelectItem key={treatment.id} value={treatment.id.toString()}>
-                                {treatment.name}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-
-                        <div className="flex gap-2">
-                          <Select id="subtreatmentSelect">
-                            <SelectTrigger>
-                              <SelectValue placeholder="Seleccionar subtratamiento" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {treatments.map((treatment) =>
-                                treatment.subtreatments.map((subtreatment) => (
-                                  <SelectItem key={subtreatment.id} value={`${treatment.id}-${subtreatment.id}`}>
-                                    {subtreatment.name} - ${subtreatment.price}
-                                  </SelectItem>
-                                )),
-                              )}
-                            </SelectContent>
-                          </Select>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            onClick={() => {
-                              const treatmentSelect = document.getElementById("treatmentSelect") as HTMLSelectElement
-                              const subtreatmentSelect = document.getElementById(
-                                "subtreatmentSelect",
-                              ) as HTMLSelectElement
-                              if (treatmentSelect && subtreatmentSelect) {
-                                const [treatmentId, subtreatmentId] = subtreatmentSelect.value.split("-").map(Number)
-                                handleAddTreatmentToCart(treatmentId, subtreatmentId)
-                              }
-                            }}
-                          >
-                            Agregar
-                          </Button>
-                        </div>
-                      </div>
+                      <Label>Seña: ${selectedAppointment.deposit}</Label>
                     </div>
-                  </div>
-                </div>
-              </div>
-
-              <div>
-                <h3 className="text-lg font-semibold mb-4">Carrito</h3>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Producto/Tratamiento</TableHead>
-                      <TableHead>Precio</TableHead>
-                      <TableHead>Cantidad</TableHead>
-                      <TableHead>Subtotal</TableHead>
-                      <TableHead className="text-right">Acciones</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {cartItems.map((item) => (
-                      <TableRow key={item.id}>
-                        <TableCell>{item.name}</TableCell>
-                        <TableCell>${item.price}</TableCell>
-                        <TableCell>
-                          <Input
-                            type="number"
-                            min="1"
-                            value={item.quantity}
-                            onChange={(e) => handleUpdateCartItemQuantity(item.id, Number(e.target.value))}
-                            className="w-16"
-                          />
-                        </TableCell>
-                        <TableCell>${item.price * item.quantity}</TableCell>
-                        <TableCell className="text-right">
-                          <Button variant="ghost" size="sm" onClick={() => handleRemoveCartItem(item.id)}>
-                            <Trash className="h-4 w-4" />
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-
-                <div className="mt-4 flex justify-between items-center">
-                  <div>
-                    <p>
-                      <span className="font-medium">Total:</span> ${calculateCartTotal()}
-                    </p>
-                    <p>
-                      <span className="font-medium">Seña:</span> ${selectedAppointment.deposit}
-                    </p>
-                    <p>
-                      <span className="font-medium">A pagar:</span> ${calculateAmountToPay()}
-                    </p>
+                    <div>
+                      <Label>Pendiente: ${calculateAmountToPay()}</Label>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -668,13 +685,17 @@ export default function AppointmentsPage() {
                 <h3 className="text-lg font-semibold mb-4">Métodos de Pago</h3>
                 <div className="space-y-4">
                   {selectedPaymentMethods.map((payment, index) => (
-                    <div key={index} className="flex gap-4 items-center">
+                    <div key={index} className="grid grid-cols-2 gap-4">
                       <Select
                         value={payment.method}
-                        onValueChange={(value) => handleUpdatePaymentMethod(index, value, payment.amount)}
+                        onValueChange={(value) => {
+                          const newPayments = [...selectedPaymentMethods]
+                          newPayments[index] = { ...payment, method: value }
+                          setSelectedPaymentMethods(newPayments)
+                        }}
                       >
-                        <SelectTrigger className="w-[200px]">
-                          <SelectValue placeholder="Método de pago" />
+                        <SelectTrigger>
+                          <SelectValue placeholder="Seleccionar método" />
                         </SelectTrigger>
                         <SelectContent>
                           {paymentMethods.map((method) => (
@@ -686,58 +707,41 @@ export default function AppointmentsPage() {
                       </Select>
                       <Input
                         type="number"
-                        min="0"
                         value={payment.amount}
-                        onChange={(e) => handleUpdatePaymentMethod(index, payment.method, Number(e.target.value))}
-                        className="w-32"
+                        onChange={(e) => {
+                          const newPayments = [...selectedPaymentMethods]
+                          newPayments[index] = { ...payment, amount: Number(e.target.value) }
+                          setSelectedPaymentMethods(newPayments)
+                        }}
+                        placeholder="Monto"
                       />
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => handleRemovePaymentMethod(index)}
-                        disabled={selectedPaymentMethods.length === 1}
-                      >
-                        <Trash className="h-4 w-4" />
-                      </Button>
                     </div>
                   ))}
-
-                  <Button type="button" variant="outline" onClick={handleAddPaymentMethod}>
-                    Agregar Método de Pago
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() =>
+                      setSelectedPaymentMethods([
+                        ...selectedPaymentMethods,
+                        { method: paymentMethods[0]?.name || "Efectivo", amount: 0 },
+                      ])
+                    }
+                  >
+                    + Agregar Método de Pago
                   </Button>
-
-                  <div className="mt-4">
-                    <p>
-                      <span className="font-medium">Total a pagar:</span> ${calculateAmountToPay()}
-                    </p>
-                    <p>
-                      <span className="font-medium">Total pagos:</span> ${calculateTotalPayments()}
-                    </p>
-                    {calculateTotalPayments() !== calculateAmountToPay() && (
-                      <p className="text-red-500">
-                        {calculateTotalPayments() < calculateAmountToPay()
-                          ? `Falta: $${calculateAmountToPay() - calculateTotalPayments()}`
-                          : `Sobra: $${calculateTotalPayments() - calculateAmountToPay()}`}
-                      </p>
-                    )}
-                  </div>
                 </div>
               </div>
-
-              <DialogFooter>
-                <Button type="button" variant="outline" onClick={() => setIsCartDialogOpen(false)}>
-                  Cancelar
-                </Button>
-                <Button
-                  type="button"
-                  onClick={handleCompleteSale}
-                  disabled={calculateTotalPayments() !== calculateAmountToPay() || cartItems.length === 0}
-                >
-                  Completar Venta
-                </Button>
-              </DialogFooter>
             </div>
           )}
+
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setIsCartDialogOpen(false)}>
+              Cancelar
+            </Button>
+            <Button type="button" onClick={handleCompleteSale} disabled={isLoading}>
+              {isLoading ? "Completando..." : "Completar Venta"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

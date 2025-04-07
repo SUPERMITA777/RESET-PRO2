@@ -6,7 +6,7 @@ import { useEffect, useState } from "react"
 import { useRouter, usePathname } from "next/navigation"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
-import { Calendar, Users, Scissors, Clock, ShoppingBag, Settings, LogOut, LayoutDashboard } from "lucide-react"
+import { Calendar, Users, Scissors, Clock, ShoppingBag, Settings, LogOut, LayoutDashboard, CalendarCheck } from "lucide-react"
 
 export default function AdminLayout({
   children,
@@ -67,6 +67,17 @@ export default function AdminLayout({
             >
               <Calendar className="mr-2 h-5 w-5" />
               Agenda
+            </Button>
+          </Link>
+          <Link href="/admin/agenda2">
+            <Button
+              variant="ghost"
+              className={`w-full justify-start ${
+                pathname === "/admin/agenda2" ? "bg-[#e07a5f] hover:bg-[#e07a5f]" : "hover:bg-[#4d5070]"
+              }`}
+            >
+              <CalendarCheck className="mr-2 h-5 w-5" />
+              Agenda 2
             </Button>
           </Link>
           <Link href="/admin/professionals">

@@ -1,6 +1,8 @@
 // This is a mock database service for demonstration purposes
 // In a real application, you would connect to a real database like PostgreSQL
 
+import { createSupabaseClient } from './supabase/client'
+
 // Types
 export interface Professional {
   id: number
@@ -585,5 +587,166 @@ export const db = {
       })
     })
   },
+}
+
+// Database functions
+export async function getProfessionals(): Promise<Professional[]> {
+  const supabase = createSupabaseClient()
+  const { data, error } = await supabase
+    .from('professionals')
+    .select('*')
+  
+  if (error) throw error
+  return data || []
+}
+
+export async function getTreatmentAvailabilities(): Promise<TreatmentAvailability[]> {
+  const supabase = createSupabaseClient()
+  const { data, error } = await supabase
+    .from('treatment_availabilities')
+    .select('*')
+  
+  if (error) throw error
+  return data || []
+}
+
+export async function getTreatments(): Promise<Treatment[]> {
+  const supabase = createSupabaseClient()
+  const { data: treatments, error: treatmentsError } = await supabase
+    .from('treatments')
+    .select('*')
+  
+  if (treatmentsError) throw treatmentsError
+
+  const { data: subtreatments, error: subtreatmentsError } = await supabase
+    .from('subtreatments')
+    .select('*')
+  
+  if (subtreatmentsError) throw subtreatmentsError
+
+  const { data: availabilities, error: availabilitiesError } = await supabase
+    .from('treatment_availabilities')
+    .select('*')
+  
+  if (availabilitiesError) throw availabilitiesError
+
+  return treatments.map(treatment => ({
+    ...treatment,
+    subtreatments: subtreatments.filter(st => st.treatment_id === treatment.id),
+    availabilities: availabilities.filter(a => a.treatment_id === treatment.id)
+  })) || []
+}
+
+export async function getAppointments(): Promise<Appointment[]> {
+  const supabase = createSupabaseClient()
+  const { data, error } = await supabase
+    .from('appointments')
+    .select('*')
+  
+  if (error) throw error
+  return data || []
+}
+
+export async function getClients(): Promise<Client[]> {
+  const supabase = createSupabaseClient()
+  const { data, error } = await supabase
+    .from('clients')
+    .select('*')
+  
+  if (error) throw error
+  return data || []
+}
+
+export async function getProducts(): Promise<Product[]> {
+  const supabase = createSupabaseClient()
+  const { data, error } = await supabase
+    .from('products')
+    .select('*')
+  
+  if (error) throw error
+  return data || []
+}
+
+export async function getPaymentMethods(): Promise<PaymentMethod[]> {
+  const supabase = createSupabaseClient()
+  const { data, error } = await supabase
+    .from('payment_methods')
+    .select('*')
+  
+  if (error) throw error
+  return data || []
+}
+
+// Create functions
+export async function createAppointment(appointment: Omit<Appointment, 'id'>): Promise<Appointment> {
+  const supabase = createSupabaseClient()
+  const { data, error } = await supabase
+    .from('appointments')
+    .insert([appointment])
+    .select()
+    .single()
+  
+  if (error) throw error
+  return data
+}
+
+export async function createClient(client: Omit<Client, 'id'>): Promise<Client> {
+  const supabase = createSupabaseClient()
+  const { data, error } = await supabase
+    .from('clients')
+    .insert([client])
+    .select()
+    .single()
+  
+  if (error) throw error
+  return data
+}
+
+// Update functions
+export async function updateAppointment(id: number, appointment: Partial<Appointment>): Promise<Appointment> {
+  const supabase = createSupabaseClient()
+  const { data, error } = await supabase
+    .from('appointments')
+    .update(appointment)
+    .eq('id', id)
+    .select()
+    .single()
+  
+  if (error) throw error
+  return data
+}
+
+export async function updateClient(id: number, client: Partial<Client>): Promise<Client> {
+  const supabase = createSupabaseClient()
+  const { data, error } = await supabase
+    .from('clients')
+    .update(client)
+    .eq('id', id)
+    .select()
+    .single()
+  
+  if (error) throw error
+  return data
+}
+
+// Delete functions
+export async function deleteAppointment(id: number): Promise<void> {
+  const supabase = createSupabaseClient()
+  const { error } = await supabase
+    .from('appointments')
+    .delete()
+    .eq('id', id)
+  
+  if (error) throw error
+}
+
+export async function deleteClient(id: number): Promise<void> {
+  const supabase = createSupabaseClient()
+  const { error } = await supabase
+    .from('clients')
+    .delete()
+    .eq('id', id)
+  
+  if (error) throw error
 }
 

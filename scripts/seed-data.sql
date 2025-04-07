@@ -1,8 +1,8 @@
 -- Insertar profesionales
 INSERT INTO professionals (name, specialty, email, phone, bio)
 VALUES 
-  ('Ana García', 'Masajista', 'ana.garcia@example.com', '123-456-7890', 'Especialista en masajes terapéuticos con más de 5 años de experiencia.'),
-  ('Carlos Rodríguez', 'Esteticista', 'carlos.rodriguez@example.com', '234-567-8901', 'Especialista en tratamientos faciales y corporales.');
+  ('Soledad Veron', 'Masajista', 'ana.garcia@example.com', '123-456-7890', 'Especialista en masajes terapéuticos con más de 5 años de experiencia.'),
+  ('Sandra Veron', 'Esteticista', 'carlos.rodriguez@example.com', '234-567-8901', 'Especialista en tratamientos faciales y corporales.');
 
 -- Insertar horarios de profesionales
 INSERT INTO professional_schedules (professional_id, day_of_week, start_time, end_time)
