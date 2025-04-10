@@ -12,10 +12,24 @@ import { ChevronLeft, ChevronRight, AlertCircle, Calendar as CalendarIcon, Plus,
 import { getSupabaseClient } from "@/lib/supabase/client"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Calendar } from "@/components/ui/calendar"
-import { format, startOfWeek, endOfWeek, eachDayOfInterval, isSameDay } from "date-fns"
+import { format, startOfWeek, endOfWeek, eachDayOfInterval, isSameDay, addDays, isAfter, isBefore, isEqual, parse, addMinutes } from "date-fns"
 import { es } from "date-fns/locale"
 import { useToast } from "@/components/ui/use-toast"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { Badge } from "@/components/ui/badge"
+import { ScrollArea } from "@/components/ui/scroll-area"
+
+// Convertir hora (HH:MM) a minutos totales desde medianoche
+const convertTimeToMinutes = (timeStr: string): number => {
+  const [hours, minutes] = timeStr.split(':').map(Number);
+  return hours * 60 + minutes;
+};
+
+// Obtener el nombre del día en inglés para acceder a la propiedad de disponibilidad
+const getDayName = (date: Date): keyof TreatmentAvailability => {
+  const dayNames = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+  return dayNames[date.getDay()] as keyof TreatmentAvailability;
+};
 
 // Zona horaria de Argentina - para futuras implementaciones
 const ARGENTINA_TIMEZONE = 'America/Argentina/Buenos_Aires';
@@ -24,10 +38,10 @@ const ARGENTINA_TIMEZONE = 'America/Argentina/Buenos_Aires';
 const boxes = ["Box 1", "Box 2", "Box 3", "Box 4", "Box 5"]
 
 // Time slots (30 min intervals from 8:00 to 20:00)
-const timeSlots = Array.from({ length: 25 }, (_, i) => {
+const timeSlots = Array.from({ length: 24 }, (_, i) => {
   const hour = Math.floor(i / 2) + 8
   const minute = (i % 2) * 30
-  return `${hour.toString().padStart(2, "0")}:${minute.toString().padStart(2, "0")}`
+  return `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`
 })
 
 // Definir colores para los estados de las citas
@@ -129,14 +143,17 @@ export default function AgendaPage() {
   const [newClientEmail, setNewClientEmail] = useState("")
   const [searchTerm, setSearchTerm] = useState("")
   const [selectedDate, setSelectedDate] = useState<Date>(new Date())
+  const [selectedTime, setSelectedTime] = useState<string | null>(null)
+  const [selectedBox, setSelectedBox] = useState<string | null>(null)
   const [viewMode, setViewMode] = useState<"daily" | "weekly">("daily")
   const { toast } = useToast()
   const [isCalendarVisible, setIsCalendarVisible] = useState(false)
   const [clientSearchTerm, setClientSearchTerm] = useState("")
   const [clientSearchResults, setClientSearchResults] = useState<Client[]>([])
   const [showClientResults, setShowClientResults] = useState(false)
-  const [selectedBox, setSelectedBox] = useState<string | null>(null)
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
+  // Fecha formateada para API como estado para poder actualizarla
+  const [currentApiFormattedDate, setCurrentApiFormattedDate] = useState(new Date().toISOString().split("T")[0])
 
   const supabase = getSupabaseClient()
 
@@ -235,14 +252,58 @@ export default function AgendaPage() {
     console.log('Cargando citas para fecha:', formattedDate)
 
     try {
-      // Cargar TODAS las citas para la fecha seleccionada
+      setLoading(true);
+      
+      // Cargar TODAS las citas para la fecha seleccionada con información del cliente y tratamiento
       const { data, error } = await supabase
         .from("appointments")
         .select("*, clients(name), treatments(name)")
         .eq("date", formattedDate)
 
-      if (error) throw error
-      console.log('Citas cargadas:', data?.length || 0, data)
+      if (error) {
+        console.error("Error cargando citas:", error);
+        throw error;
+      }
+      
+      console.log('Citas cargadas:', data?.length || 0);
+      console.log('Detalle de citas:', data);
+      
+      // Asegurarnos de que las citas tienen toda la información necesaria
+      if (data && data.length > 0) {
+        // Verificar si alguna cita no tiene la información del cliente o tratamiento
+        const missingDataCitas = data.filter(cita => !cita.clients || !cita.treatments);
+        if (missingDataCitas.length > 0) {
+          console.warn('Algunas citas no tienen toda la información necesaria:', missingDataCitas);
+          
+          // Intentar cargar la información faltante para estas citas
+          for (const cita of missingDataCitas) {
+            if (!cita.clients) {
+              const { data: clientData } = await supabase
+                .from("clients")
+                .select("name")
+                .eq("id", cita.client_id)
+                .single();
+                
+              if (clientData) {
+                cita.clients = clientData;
+              }
+            }
+            
+            if (!cita.treatments) {
+              const { data: treatmentData } = await supabase
+                .from("treatments")
+                .select("name")
+                .eq("id", cita.treatment_id)
+                .single();
+                
+              if (treatmentData) {
+                cita.treatments = treatmentData;
+              }
+            }
+          }
+        }
+      }
+      
       setAppointments(data || [])
       setFilteredAppointments(data || [])
 
@@ -253,12 +314,23 @@ export default function AgendaPage() {
         .lte('start_date', formattedDate)
         .gte('end_date', formattedDate)
 
-      if (availabilitiesError) throw availabilitiesError
-      console.log('Disponibilidades actualizadas:', availabilitiesData?.length || 0)
-      setAvailabilities(availabilitiesData || [])
+      if (availabilitiesError) {
+        console.error("Error cargando disponibilidades:", availabilitiesError);
+        throw availabilitiesError;
+      }
+      
+      console.log('Disponibilidades actualizadas:', availabilitiesData?.length || 0);
+      console.log('Detalle de disponibilidades:', availabilitiesData);
+      
+      setAvailabilities(availabilitiesData || []);
+      
+      // Actualizar también la fecha formateada para API
+      setCurrentApiFormattedDate(formattedDate);
     } catch (error) {
       console.error("Error loading appointments:", error)
       setError("Error al cargar las citas. Por favor, recarga la página.")
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -314,8 +386,8 @@ export default function AgendaPage() {
     day: "numeric",
   })
 
-  // Format date for API
-  const apiFormattedDate = currentDate.toISOString().split("T")[0]
+  // Format date for API - como getter para leer el estado actual
+  const apiFormattedDate = currentApiFormattedDate
 
   // Navigate to previous day
   const goToPreviousDay = () => {
@@ -377,80 +449,120 @@ export default function AgendaPage() {
     return slotAvailable
   }
 
-  // Función para manejar el clic en un slot para crear una nueva cita
-  const handleSlotClick = (box: string, time: string) => {
-    // Verificar si ya existe una cita para este slot
-    const appointment = appointments.find(a => 
-      a.box === box && 
-      a.date === selectedDate.toISOString().split('T')[0] &&
-      a.time === time
+  // Get appointment for a specific slot
+  const getAppointment = (box: string, time: string) => {
+    // Buscar una cita que coincida con el box, tiempo y fecha actual
+    console.log(`Buscando cita para box: ${box}, hora: ${time}, fecha: ${apiFormattedDate}`);
+    
+    const appointment = appointments.find(app => 
+      app.box === box && 
+      app.time === time && 
+      app.date === apiFormattedDate
     );
-
-    // Si existe una cita, seleccionarla para editar
+    
     if (appointment) {
-      setSelectedAppointment(appointment);
-      const treatment = treatments.find(t => t.id === appointment.treatment_id);
-      setSelectedTreatment(treatment || null);
-      const subtreatmentId = appointment.subtreatment_id.toString();
-      setSelectedSubtreatment(subtreatmentId);
-      setSelectedClient(appointment.client_id.toString());
-      setClientSearchTerm(clients.find(c => c.id === appointment.client_id)?.name || "");
-      setSelectedDate(new Date(appointment.date));
-      const timeParts = appointment.time.split(':');
-      const slot = new Date();
-      slot.setHours(parseInt(timeParts[0], 10), parseInt(timeParts[1], 10), 0, 0);
-      setSelectedSlot(slot);
-      setSelectedBox(appointment.box);
-      setIsDialogOpen(true);
-    } else {
-      // Verificar si el slot está disponible
-      if (isSlotAvailable(box, time)) {
-        // Encontrar tratamientos disponibles para este slot
-        const availableTreatmentsForSlot = availabilities
-          .filter(a => 
-            a.box === box && 
-            a.start_time <= time &&
-            a.end_time >= time &&
-            a.start_date <= selectedDate.toISOString().split('T')[0] &&
-            a.end_date >= selectedDate.toISOString().split('T')[0]
-          )
-          .map(a => treatments.find(t => t.id === a.treatment_id))
-          .filter(Boolean) as Treatment[];
+      console.log(`Cita encontrada:`, appointment);
+    }
+    
+    return appointment;
+  };
 
-        if (availableTreatmentsForSlot.length > 0) {
-          // Si solo hay un tratamiento disponible, seleccionarlo automáticamente
-          setSelectedTreatment(availableTreatmentsForSlot[0]);
-          setSelectedSubtreatment("");
-          setSelectedClient("");
-          setClientSearchTerm("");
-          const timeParts = time.split(':');
-          const slot = new Date();
-          slot.setHours(parseInt(timeParts[0], 10), parseInt(timeParts[1], 10), 0, 0);
-          setSelectedSlot(slot);
-          setSelectedBox(box);
-          setSelectedAppointment(null);
-          setIsDialogOpen(true);
-        } else {
-          toast({
-            title: "Sin tratamientos",
-            description: "No hay tratamientos disponibles para este horario",
-            variant: "destructive",
-          });
-        }
+  // Función para manejar el clic en un slot para crear una nueva cita
+  const handleSlotClick = (time: string, box: string) => {
+    console.log(`Click en slot - Box: ${box}, Hora: ${time}, Fecha: ${apiFormattedDate}`);
+    
+    // Verificar si ya hay una cita en este slot
+    const appointment = getAppointment(box, time);
+    if (appointment) {
+      console.log('Cita existente encontrada:', appointment);
+      
+      // Si hay una cita, abrir el diálogo de edición
+      setSelectedAppointment(appointment);
+      setSelectedTreatment(treatments.find(t => t.id === appointment.treatment_id) || null);
+      setSelectedSubtreatment(appointment.subtreatment_id.toString());
+      setSelectedClient(appointment.client_id.toString());
+      setSelectedTime(time);
+      setSelectedBox(box);
+      
+      setIsDialogOpen(true);
+      return;
+    }
+    
+    // Si no hay cita, verificar si el slot está disponible
+    if (!isSlotAvailable(box, time)) {
+      console.log(`Slot no disponible - Box: ${box}, Hora: ${time}`);
+      toast({
+        title: "No disponible",
+        description: "Este horario no está disponible para agendar citas",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    // Obtener el tratamiento disponible para este horario
+    const availableTreatmentIds = availabilities
+      .filter(a => 
+        a.box === box && 
+        a.start_time <= time && 
+        a.end_time > time && 
+        a.start_date <= apiFormattedDate && 
+        a.end_date >= apiFormattedDate
+      )
+      .map(a => a.treatment_id);
+      
+    console.log('IDs de tratamientos disponibles:', availableTreatmentIds);
+    
+    if (availableTreatmentIds.length === 0) {
+      toast({
+        title: "Error",
+        description: "No hay tratamientos disponibles para este horario",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    // Tomar el primer tratamiento disponible
+    const availableTreatment = treatments.find(t => availableTreatmentIds.includes(t.id));
+    console.log('Tratamiento disponible:', availableTreatment);
+
+    if (availableTreatment) {
+      // Obtener el primer subtratamiento del tratamiento disponible
+      const firstSubtreatment = subtreatments.find(s => s.treatment_id === availableTreatment.id);
+      console.log('Primer subtratamiento:', firstSubtreatment);
+      
+      if (firstSubtreatment) {
+        // Establecer los valores predeterminados
+        setSelectedAppointment(null); // Asegurarnos de que estamos creando, no editando
+        setSelectedTreatment(availableTreatment);
+        setSelectedSubtreatment(firstSubtreatment.id.toString());
+        setSelectedTime(time);
+        setSelectedBox(box);
+        setSelectedClient(""); // Limpiar la selección de cliente para una nueva cita
+        
+        console.log('Abriendo diálogo con valores:');
+        console.log('- Tratamiento:', availableTreatment.name);
+        console.log('- Subtratamiento:', firstSubtreatment.name);
+        console.log('- Fecha:', apiFormattedDate);
+        console.log('- Hora:', time);
+        console.log('- Box:', box);
+        
+        // Abrir el diálogo de cita
+        setIsDialogOpen(true);
       } else {
         toast({
-          title: "No disponible",
-          description: "Este horario no está disponible",
+          title: "Error",
+          description: "No se encontró un subtratamiento para este horario",
           variant: "destructive",
         });
       }
+    } else {
+      toast({
+        title: "Error",
+        description: "No hay tratamientos disponibles para este horario",
+        variant: "destructive",
+      });
     }
   };
-
-  // Get appointment for a specific slot
-  const getAppointment = (box: string, time: string) => {
-    return appointments.find((app) => app.box === box && app.time === time && app.date === apiFormattedDate)
-  }
 
   // Get status class for a slot
   const getStatusClass = (box: string, time: string): string => {
@@ -488,9 +600,11 @@ export default function AgendaPage() {
         .map((a) => a.treatment_id)
 
       // Obtener los nombres de los tratamientos
-      const availableTreatmentNames = treatments.filter((t) => availableTreatmentIds.includes(t.id)).map((t) => t.name)
+      const availableTreatmentNames = treatments
+        .filter((t) => availableTreatmentIds.includes(t.id))
+        .map((t) => t.name)
 
-      if (availableTreatmentNames.length === 0) return ""
+      if (availableTreatmentNames.length === 0) return "Disponible"
       if (availableTreatmentNames.length === 1) return availableTreatmentNames[0]
       return `${availableTreatmentNames.length} tratamientos`
     }
@@ -540,6 +654,8 @@ export default function AgendaPage() {
     setError(null)
 
     try {
+      console.log('Guardando cita...');
+      
       const formData = new FormData(e.target as HTMLFormElement)
       const clientId = Number(formData.get("clientName"))
       const subtreatmentId = Number(formData.get("subtreatmentId"))
@@ -547,16 +663,26 @@ export default function AgendaPage() {
       const deposit = Number(formData.get("deposit"))
       const status = formData.get("status") as string
       const date = formData.get("date") as string
-      const time = formData.get("time") as string
-      const box = formData.get("box") as string
-
-      // Obtener el precio del subtratamiento
-      const subtreatment = subtreatments.find((s) => s.id === subtreatmentId);
-      const price = subtreatment ? subtreatment.price : 0;
+      const time = formData.get("time") as string || selectedTime
+      const box = formData.get("box") as string || selectedBox
+      
+      console.log('Datos del formulario:', {
+        clientId,
+        subtreatmentId,
+        notes,
+        deposit,
+        status,
+        date,
+        time,
+        box
+      });
 
       // Verificar que todos los campos obligatorios estén presentes
       if (!clientId || !subtreatmentId || !date || !time || !box || !status) {
         setError("Todos los campos obligatorios deben estar completos")
+        console.error("Campos obligatorios faltantes:", {
+          clientId, subtreatmentId, date, time, box, status
+        });
         setLoading(false)
         return
       }
@@ -564,6 +690,7 @@ export default function AgendaPage() {
       // Verificar que el tratamiento exista
       if (!selectedTreatment) {
         setError("Debe seleccionar un tratamiento válido")
+        console.error("No hay tratamiento seleccionado");
         setLoading(false)
         return
       }
@@ -578,61 +705,96 @@ export default function AgendaPage() {
 
         if (isTimeSlotTaken) {
           setError("Este horario ya está ocupado. Por favor, selecciona otro horario.");
+          console.error("Horario ocupado:", {date, time, box});
+          setLoading(false);
+          return;
+        }
+      } else {
+        // Si estamos editando, verificar que no estemos creando un conflicto con otra cita
+        const isTimeSlotTaken = appointments.some(appointment => 
+          appointment.date === date && 
+          appointment.time === time && 
+          appointment.box === box && 
+          appointment.id !== selectedAppointment.id
+        );
+
+        if (isTimeSlotTaken) {
+          setError("Este horario ya está ocupado por otra cita. Por favor, selecciona otro horario.");
+          console.error("Horario ocupado por otra cita:", {date, time, box});
           setLoading(false);
           return;
         }
       }
 
+      // Obtener el precio del subtratamiento
+      const subtreatment = subtreatments.find((s) => s.id === subtreatmentId);
+      const price = subtreatment ? subtreatment.price : 0;
+      
+      console.log('Subtratamiento encontrado:', subtreatment);
+      console.log('Precio:', price);
+
+      // Datos de la cita para crear o actualizar
+      const appointmentData = {
+        client_id: clientId,
+        treatment_id: selectedTreatment.id,
+        subtreatment_id: subtreatmentId,
+        date,
+        time,
+        box,
+        status,
+        deposit,
+        price,
+        notes,
+        professional_id: 1 // Por ahora usamos un profesional por defecto
+      };
+      
+      console.log('Datos de la cita a guardar:', appointmentData);
+
       // Si estamos editando una cita existente
       if (selectedAppointment) {
-        const { error } = await supabase
+        console.log('Actualizando cita existente ID:', selectedAppointment.id);
+        
+        const { data, error } = await supabase
           .from("appointments")
-          .update({
-            client_id: clientId,
-            treatment_id: selectedTreatment.id,
-            subtreatment_id: subtreatmentId,
-            date,
-            time,
-            box,
-            status,
-            deposit,
-            price,
-            notes,
-          })
+          .update(appointmentData)
           .eq("id", selectedAppointment.id)
+          .select();
 
-        if (error) throw error
+        if (error) {
+          console.error('Error al actualizar cita:', error);
+          throw error;
+        }
+        
+        console.log('Cita actualizada:', data);
 
         toast({
           title: "Éxito",
           description: "Cita actualizada correctamente",
-        })
+        });
       } else {
         // Si estamos creando una nueva cita
-        const { error } = await supabase.from("appointments").insert({
-          client_id: clientId,
-          professional_id: 1, // Por ahora usamos un profesional por defecto
-          treatment_id: selectedTreatment.id,
-          subtreatment_id: subtreatmentId,
-          date,
-          time,
-          box,
-          status,
-          deposit,
-          price,
-          notes,
-        })
+        console.log('Creando nueva cita');
+        
+        const { data, error } = await supabase
+          .from("appointments")
+          .insert(appointmentData)
+          .select();
 
-        if (error) throw error
+        if (error) {
+          console.error('Error al crear cita:', error);
+          throw error;
+        }
+        
+        console.log('Cita creada:', data);
 
         toast({
           title: "Éxito",
           description: "Cita creada correctamente",
-        })
+        });
       }
 
       // Recargar las citas para mantener los datos actualizados
-      await loadAppointments(selectedDate)
+      await loadAppointments(selectedDate);
 
       // Cerrar el diálogo y limpiar la selección
       setIsDialogOpen(false)
@@ -642,6 +804,8 @@ export default function AgendaPage() {
       setSelectedClient("")
       setSelectedSubtreatment("")
       setClientSearchTerm("")
+      setSelectedTime(null)
+      setSelectedBox(null)
     } catch (error) {
       console.error("Error al guardar la cita:", error)
       setError("Error al guardar la cita. Por favor, inténtalo de nuevo.")
@@ -778,76 +942,96 @@ export default function AgendaPage() {
 
   // Mostrar horas y slots disponibles para la vista diaria
   const renderDailyView = () => {
-    const hours = []
-    for (let i = 9; i <= 20; i++) {
-      hours.push(`${i}:00`)
-      hours.push(`${i}:30`)
-    }
-
-    console.log('Renderizando vista diaria con', appointments.length, 'citas')
+    // Generar slots de tiempo desde las 8:00 hasta las 20:00 en intervalos de 30 minutos
+    const timeSlots = Array.from({ length: 25 }, (_, i) => {
+      const hour = Math.floor(i / 2) + 8;
+      const minute = (i % 2) * 30;
+      return `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
+    });
 
     return (
-      <div className="overflow-x-auto">
-        <table className="w-full border-collapse">
-          <thead>
-            <tr>
-              <th className="border p-2 bg-gray-100 w-20">Hora</th>
-              {boxes.map(box => (
-                <th key={box} className="border p-2 bg-gray-100 w-40">
-                  {box}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {hours.map(time => (
-              <tr key={time}>
-                <td className="border p-2 text-center font-medium">{time}</td>
-                {boxes.map(box => {
-                  const appointment = getAppointment(box, time)
-                  const statusClass = getStatusClass(box, time)
-                  const isAvailable = isSlotAvailable(box, time)
+      <div className="space-y-4">
+        {/* Cabecera de la tabla con nombres de los boxes */}
+        <div className="grid grid-cols-6 gap-4 border-b pb-2 font-semibold">
+          <div className="col-span-1">Hora</div>
+          {boxes.map((box) => (
+            <div key={box} className="col-span-1 text-center">{box}</div>
+          ))}
+        </div>
+        
+        {/* Filas de slots por hora */}
+        <div className="grid grid-cols-1 gap-4">
+          {timeSlots.map((time) => (
+            <div key={time} className="grid grid-cols-6 gap-4 py-2 border-b border-gray-100">
+              <div className="col-span-1 font-medium flex items-center">{time}</div>
+              {boxes.map((box) => {
+                const appointment = getAppointment(box, time);
+                const isAvailable = isSlotAvailable(box, time);
+                const treatmentName = getTreatmentName(box, time);
+                
+                // Determinar el color de fondo basado en el estado de la cita
+                let bgColor = 'bg-gray-100'; // Por defecto: no disponible
+                let statusText = '';
+                
+                if (appointment) {
+                  // Si hay una cita, el color depende del estado
+                  switch(appointment.status) {
+                    case 'pending':
+                      bgColor = 'bg-yellow-100';
+                      statusText = 'Pendiente';
+                      break;
+                    case 'confirmed':
+                      bgColor = 'bg-green-100';
+                      statusText = 'Confirmado';
+                      break;
+                    case 'completed':
+                      bgColor = 'bg-blue-100';
+                      statusText = 'Completado';
+                      break;
+                    case 'canceled':
+                      bgColor = 'bg-red-100';
+                      statusText = 'Cancelado';
+                      break;
+                  }
+                } else if (isAvailable) {
+                  // Si no hay cita pero el slot está disponible
+                  bgColor = 'bg-green-50';
+                  statusText = 'Disponible';
+                }
 
-                  return (
-                    <td 
-                      key={`${box}-${time}`} 
-                      className={`border p-2 ${statusClass} ${
-                        isAvailable && !appointment ? "bg-green-50 cursor-pointer hover:bg-green-100" : 
-                        appointment ? "cursor-pointer hover:bg-blue-50" : "bg-gray-50"
-                      }`}
-                      onClick={() => handleSlotClick(box, time)}
-                    >
-                      {appointment ? (
-                        <div className="text-xs text-center w-full">
-                          {/* Mostrar tratamiento y cliente */}
-                          <div className="font-medium truncate">
-                            {appointment.treatments?.name || treatments.find(t => t.id === appointment.treatment_id)?.name || ""}
-                          </div>
-                          <div className="text-gray-700 truncate">
-                            {appointment.clients?.name || clients.find(c => c.id === appointment.client_id)?.name || ""}
-                          </div>
-                          <div className="text-xs mt-1 capitalize font-semibold">
-                            {appointment.status === 'pending' && 'Pendiente'}
-                            {appointment.status === 'confirmed' && 'Confirmado'}
-                            {appointment.status === 'completed' && 'Completado'}
-                            {appointment.status === 'canceled' && 'Cancelado'}
-                          </div>
+                return (
+                  <div
+                    key={`${box}-${time}`}
+                    className={`col-span-1 p-2 rounded cursor-pointer hover:opacity-80 transition-opacity ${bgColor}`}
+                    onClick={() => handleSlotClick(time, box)}
+                  >
+                    {appointment ? (
+                      <div className="text-sm">
+                        <div className="font-medium truncate">{treatmentName}</div>
+                        <div className="text-gray-600 truncate">
+                          {appointment.clients?.name || 'Cliente no especificado'}
                         </div>
-                      ) : isAvailable ? (
-                        <div className="text-xs text-center text-green-600">Disponible</div>
-                      ) : (
-                        <div className="text-xs text-center text-gray-400">—</div>
-                      )}
-                    </td>
-                  )
-                })}
-              </tr>
-            ))}
-          </tbody>
-        </table>
+                        <div className="text-xs mt-1 font-medium">
+                          {statusText}
+                        </div>
+                      </div>
+                    ) : isAvailable ? (
+                      <div className="text-sm">
+                        <div className="font-medium truncate">{treatmentName}</div>
+                        <div className="text-green-600 text-xs">{statusText}</div>
+                      </div>
+                    ) : (
+                      <div className="text-sm text-gray-500">No disponible</div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+        </div>
       </div>
-    )
-  }
+    );
+  };
 
   if (loading) {
     return <div className="flex justify-center items-center h-64">Cargando...</div>
@@ -899,16 +1083,7 @@ export default function AgendaPage() {
         </div>
       </div>
 
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle>Agenda - {formattedDate}</CardTitle>
-        </CardHeader>
-        <CardContent className="p-0">
-          {renderDailyView()}
-        </CardContent>
-      </Card>
-
-      <div className="flex justify-between items-center">
+      <div className="flex justify-between items-center mb-4">
         <div className="flex items-center gap-4">
           <Button
             variant={viewMode === "daily" ? "default" : "outline"}
@@ -930,7 +1105,7 @@ export default function AgendaPage() {
       </div>
 
       {isCalendarVisible && (
-        <Card>
+        <Card className="mb-4">
           <CardContent className="p-4">
             <Calendar
               mode="single"
@@ -944,6 +1119,9 @@ export default function AgendaPage() {
       )}
 
       <Card>
+        <CardHeader className="pb-2">
+          <CardTitle>Agenda - {formattedDate}</CardTitle>
+        </CardHeader>
         <CardContent className="p-0">
           {viewMode === "daily" ? (
             renderDailyView()
@@ -988,8 +1166,16 @@ export default function AgendaPage() {
                       >
                         {appointment ? (
                           <div className="text-xs text-center">
-                            <div className="font-medium">{appointment.client_id}</div>
-                            <div className="text-gray-500">{appointment.status}</div>
+                            <div className="font-medium">{getTreatmentName(appointment.box, appointment.time)}</div>
+                            <div className="text-gray-600 truncate">
+                              {clients.find(c => c.id === appointment.client_id)?.name || 'Cliente no especificado'}
+                            </div>
+                            <div className="text-xs mt-1 capitalize">
+                              {appointment.status === 'pending' && 'Pendiente'}
+                              {appointment.status === 'confirmed' && 'Confirmado'}
+                              {appointment.status === 'completed' && 'Completado'}
+                              {appointment.status === 'canceled' && 'Cancelado'}
+                            </div>
                           </div>
                         ) : (
                           <div className="text-gray-400">No disponible</div>
@@ -1174,7 +1360,7 @@ export default function AgendaPage() {
                     id="date"
                     name="date"
                     type="date"
-                    defaultValue={selectedAppointment?.date || format(selectedDate, "yyyy-MM-dd")}
+                    value={apiFormattedDate}
                     required
                     readOnly
                   />
@@ -1186,9 +1372,9 @@ export default function AgendaPage() {
                     id="time"
                     name="time"
                     type="time"
-                    defaultValue={selectedAppointment?.time || selectedSlot?.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}
+                    value={selectedTime || ""}
+                    onChange={(e) => setSelectedTime(e.target.value)}
                     required
-                    readOnly
                   />
                 </div>
               </div>
@@ -1196,14 +1382,21 @@ export default function AgendaPage() {
               <div className="grid grid-cols-2 gap-4">
                 <div className="grid gap-2">
                   <Label htmlFor="box">Box</Label>
-                  <Input
+                  <select
                     id="box"
                     name="box"
-                    type="text"
-                    defaultValue={selectedAppointment?.box || selectedBox || ""}
+                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                    value={selectedBox || ""}
+                    onChange={(e) => setSelectedBox(e.target.value)}
                     required
-                    readOnly
-                  />
+                  >
+                    <option value="">Selecciona un box</option>
+                    {boxes.map((box) => (
+                      <option key={box} value={box}>
+                        {box}
+                      </option>
+                    ))}
+                  </select>
                 </div>
 
                 <div className="grid gap-2">

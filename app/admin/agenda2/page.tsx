@@ -96,7 +96,7 @@ const boxes = ["Box 1", "Box 2", "Box 3", "Box 4", "Box 5"]
 export default function Agenda2Page() {
   const [treatments, setTreatments] = useState<Treatment[]>([])
   const [selectedTreatment, setSelectedTreatment] = useState<Treatment | null>(null)
-  const [selectedDate, setSelectedDate] = useState<Date | null>(null)
+  const [selectedDate, setSelectedDate] = useState<string | null>(null)
   const [selectedTime, setSelectedTime] = useState<string | null>(null)
   const [selectedBox, setSelectedBox] = useState<string | null>(null)
   const [availabilities, setAvailabilities] = useState<TreatmentAvailability[]>([])
@@ -105,7 +105,7 @@ export default function Agenda2Page() {
   const [subtreatments, setSubtreatments] = useState<Subtreatment[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [availableDates, setAvailableDates] = useState<{[treatmentId: number]: Date[]}>({})
+  const [availableDates, setAvailableDates] = useState<{[treatmentId: number]: string[]}>({})
   const [availableTimeSlots, setAvailableTimeSlots] = useState<{time: string, box: string}[]>([])
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [isTimeDialogOpen, setIsTimeDialogOpen] = useState(false)
@@ -126,7 +126,7 @@ export default function Agenda2Page() {
         setLoading(true)
         const supabase = getSupabaseClient()
         
-        console.log('Iniciando carga de datos en AGENDA2');
+        console.log('=== Iniciando carga de datos en AGENDA2 ===');
         
         // Cargar tratamientos
         const { data: treatmentsData, error: treatmentsError } = await supabase
@@ -135,6 +135,8 @@ export default function Agenda2Page() {
         
         if (treatmentsError) throw treatmentsError
         console.log('Tratamientos cargados:', treatmentsData?.length || 0)
+        
+        // Guardar tratamientos en el estado
         setTreatments(treatmentsData || [])
 
         // Cargar subtratamientos
@@ -144,6 +146,8 @@ export default function Agenda2Page() {
         
         if (subtreatmentsError) throw subtreatmentsError
         console.log('Subtratamientos cargados:', subtreatmentsData?.length || 0)
+        
+        // Guardar subtratamientos en el estado
         setSubtreatments(subtreatmentsData || [])
 
         // Cargar clientes
@@ -153,6 +157,8 @@ export default function Agenda2Page() {
         
         if (clientsError) throw clientsError
         console.log('Clientes cargados:', clientsData?.length || 0)
+        
+        // Guardar clientes en el estado
         setClients(clientsData || [])
 
         // Cargar disponibilidades - asegurar que estamos usando fecha en formato YYYY-MM-DD
@@ -170,6 +176,8 @@ export default function Agenda2Page() {
         
         if (availabilitiesError) throw availabilitiesError
         console.log('Disponibilidades cargadas:', availabilitiesData?.length || 0)
+        
+        // Guardar disponibilidades en el estado
         setAvailabilities(availabilitiesData || [])
 
         // Cargar citas - asegurar que estamos usando fecha en formato YYYY-MM-DD
@@ -180,20 +188,43 @@ export default function Agenda2Page() {
         
         if (appointmentsError) throw appointmentsError
         console.log('Citas cargadas en AGENDA2:', appointmentsData?.length || 0)
+        
+        // Guardar citas en el estado
         setAppointments(appointmentsData || [])
 
-        // Procesar fechas disponibles por tratamiento
-        processAvailableDates(treatmentsData || [], availabilitiesData || [], appointmentsData || [])
+        // Procesar fechas disponibles por tratamiento de forma sincrónica
+        // Esto asegura que el estado se actualice correctamente antes de continuar
+        console.log('Procesando fechas disponibles...');
+        const availableDatesByTreatment = processAvailableDatesSync(
+          treatmentsData || [], 
+          availabilitiesData || [], 
+          appointmentsData || []
+        );
         
-        console.log('Carga de datos completada en AGENDA2');
+        console.log('Actualizando estado de fechas disponibles...', availableDatesByTreatment);
+        // Actualizar el estado con todas las fechas disponibles
+        setAvailableDates({...availableDatesByTreatment});
+        
+        // Verificar si hay tratamientos sin fechas disponibles
+        const treatmentsWithoutDates = (treatmentsData || []).filter(
+          t => !availableDatesByTreatment[t.id] || availableDatesByTreatment[t.id].length === 0
+        );
+        
+        if (treatmentsWithoutDates.length > 0) {
+          console.warn('Tratamientos sin fechas disponibles:', treatmentsWithoutDates.map(t => t.name).join(', '));
+        }
+        
+        console.log('=== Carga de datos completada en AGENDA2 ===');
       } catch (error) {
         console.error('Error loading data:', error)
         setError('No se pudieron cargar los datos. Por favor, intenta nuevamente.')
       } finally {
+        // Marcar la carga como completa
         setLoading(false)
       }
     }
 
+    // Cargar los datos iniciales
     loadData()
     
     // Suscribirse a cambios en la tabla 'appointments'
@@ -240,94 +271,258 @@ export default function Agenda2Page() {
     };
   }, [])
 
+  // Versión sincrónica de processAvailableDates para usar dentro de loadData
+  const processAvailableDatesSync = (treatments: Treatment[], availabilities: TreatmentAvailability[], appointments: Appointment[]) => {
+    console.log('=== Iniciando processAvailableDatesSync ===');
+    console.log('Tratamientos totales:', treatments.length);
+    console.log('Disponibilidades totales:', availabilities.length);
+    console.log('Citas totales:', appointments.length);
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    const availableDatesByTreatment: {[treatmentId: number]: string[]} = {};
+    
+    // Inicializar el objeto para todos los tratamientos
+    treatments.forEach(treatment => {
+      availableDatesByTreatment[treatment.id] = [];
+    });
+    
+    treatments.forEach(treatment => {
+      console.log(`\nProcesando tratamiento: ${treatment.name} (ID: ${treatment.id})`);
+      
+      const treatmentAvailabilities = availabilities.filter(a => a.treatment_id === treatment.id);
+      console.log(`Disponibilidades encontradas para ${treatment.name}:`, treatmentAvailabilities.length);
+      
+      if (treatmentAvailabilities.length > 0) {
+        const uniqueDatesSet = new Set<string>();
+        
+        // Revisar los próximos 30 días
+        for (let i = 0; i < 30; i++) {
+          const currentDate = new Date(today);
+          currentDate.setDate(today.getDate() + i);
+          const formattedDate = currentDate.toISOString().split('T')[0];
+          
+          const dayOfWeek = currentDate.getDay();
+          const dayNames = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+          const dayName = dayNames[dayOfWeek] as keyof TreatmentAvailability;
+          
+          // Verificar disponibilidad para este día
+          for (const availability of treatmentAvailabilities) {
+            const dateInRange = 
+              availability.start_date <= formattedDate && 
+              availability.end_date >= formattedDate;
+            
+            // Verificar si el día de la semana está habilitado
+            const isDayEnabled = Boolean(availability[dayName]);
+            
+            if (!dateInRange || !isDayEnabled) {
+              continue; // Si no cumple con estas condiciones, pasar a la siguiente disponibilidad
+            }
+            
+            // Verificar si hay slots disponibles para esta fecha
+            const hasAvailableSlot = checkSlotsAvailableForDate(
+              treatment.id, 
+              currentDate, 
+              availability, 
+              appointments
+            );
+            
+            if (hasAvailableSlot) {
+              console.log(`Fecha disponible encontrada para ${treatment.name}: ${formattedDate}`);
+              console.log(`- Box: ${availability.box}`);
+              console.log(`- Horario: ${availability.start_time} - ${availability.end_time}`);
+              uniqueDatesSet.add(formattedDate);
+              break; // Si ya encontramos disponibilidad para esta fecha, podemos pasar a la siguiente fecha
+            }
+          }
+        }
+        
+        const uniqueDatesArray = Array.from(uniqueDatesSet);
+        uniqueDatesArray.sort();
+        
+        console.log(`\nResumen para ${treatment.name}:`);
+        console.log(`- Disponibilidades totales: ${treatmentAvailabilities.length}`);
+        console.log(`- Fechas disponibles encontradas: ${uniqueDatesArray.length}`);
+        console.log(`- Primeras fechas: ${uniqueDatesArray.slice(0, 3).join(', ')}`);
+        
+        availableDatesByTreatment[treatment.id] = uniqueDatesArray;
+      } else {
+        console.log(`No hay disponibilidades para ${treatment.name}`);
+        availableDatesByTreatment[treatment.id] = [];
+      }
+    });
+    
+    console.log('\n=== Proceso completado ===');
+    console.log('Fechas disponibles procesadas:', Object.keys(availableDatesByTreatment).length);
+    console.log('Detalle de fechas por tratamiento:', availableDatesByTreatment);
+    
+    return availableDatesByTreatment;
+  };
+  
+  // Función auxiliar para verificar slots disponibles
+  const checkSlotsAvailableForDate = (
+    treatmentId: number, 
+    date: Date, 
+    availability: TreatmentAvailability, 
+    appointments: Appointment[]
+  ): boolean => {
+    const formattedDate = date.toISOString().split('T')[0];
+    const { start_time, end_time, box } = availability;
+    
+    // Convertir horas a minutos para facilitar la comparación
+    const startMinutes = convertTimeToMinutes(start_time);
+    const endMinutes = convertTimeToMinutes(end_time);
+    
+    // Verificar si hay al menos un slot de 30 minutos disponible
+    for (let minutes = startMinutes; minutes < endMinutes; minutes += 30) {
+      const hour = Math.floor(minutes / 60);
+      const minute = minutes % 60;
+      const timeStr = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
+      
+      // Buscar si ya existe una cita en este slot
+      const existingAppointment = appointments.find(a => 
+        a.date === formattedDate && 
+        a.time === timeStr && 
+        a.box === box
+      );
+      
+      // Si no hay cita en este slot, está disponible
+      if (!existingAppointment) {
+        console.log(`Slot disponible encontrado para tratamiento ${treatmentId}:`);
+        console.log(`- Fecha: ${formattedDate}`);
+        console.log(`- Hora: ${timeStr}`);
+        console.log(`- Box: ${box}`);
+        return true;
+      }
+    }
+    
+    // Si llegamos aquí, no hay slots disponibles para esta fecha
+    return false;
+  };
+
   // Añadir un efecto adicional que se ejecute cuando cambien las disponibilidades o citas
   useEffect(() => {
     if (!loading && treatments.length > 0 && availabilities.length > 0) {
       console.log('Actualizando fechas disponibles después de cargar datos');
       processAvailableDates(treatments, availabilities, appointments);
+      
+      // Inspeccionar el estado de availableDates para depuración
+      setTimeout(() => {
+        console.log('Estado actual de availableDates:', availableDates);
+        console.log('Tratamientos con fechas disponibles:', Object.keys(availableDates).length);
+        
+        // Verificar el estado de cada tratamiento
+        treatments.forEach(treatment => {
+          const dates = availableDates[treatment.id] || [];
+          console.log(`Tratamiento ${treatment.id} (${treatment.name}): ${dates.length} fechas disponibles`);
+        });
+      }, 1000);
     }
   }, [loading, treatments.length, availabilities.length, appointments.length]);
 
   // Procesar fechas disponibles por tratamiento
   const processAvailableDates = (treatments: Treatment[], availabilities: TreatmentAvailability[], appointments: Appointment[]) => {
-    const today = new Date()
-    today.setHours(0, 0, 0, 0)
+    console.log('=== Iniciando processAvailableDates ===');
+    console.log('Tratamientos totales:', treatments.length);
+    console.log('Disponibilidades totales:', availabilities.length);
+    console.log('Citas totales:', appointments.length);
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
     
-    console.log('Procesando fechas disponibles - Tratamientos:', treatments.length, 'Disponibilidades:', availabilities.length, 'Citas:', appointments.length);
+    const availableDatesByTreatment: {[treatmentId: number]: string[]} = {};
     
-    const availableDatesByTreatment: {[treatmentId: number]: Date[]} = {}
+    // Inicializar el objeto para todos los tratamientos
+    treatments.forEach(treatment => {
+      availableDatesByTreatment[treatment.id] = [];
+    });
     
     treatments.forEach(treatment => {
-      const treatmentAvailabilities = availabilities.filter(a => a.treatment_id === treatment.id)
+      console.log(`\nProcesando tratamiento: ${treatment.name} (ID: ${treatment.id})`);
       
-      console.log(`Tratamiento ${treatment.id} (${treatment.name}) - Disponibilidades: ${treatmentAvailabilities.length}`);
+      // Filtrar disponibilidades para este tratamiento
+      const treatmentAvailabilities = availabilities.filter(a => a.treatment_id === treatment.id);
+      console.log(`Disponibilidades encontradas para ${treatment.name}:`, treatmentAvailabilities.length);
       
       if (treatmentAvailabilities.length > 0) {
-        // Conjunto para almacenar fechas únicas (como string para comparación fácil)
-        const uniqueDatesSet = new Set<string>()
+        const uniqueDatesSet = new Set<string>();
         
         // Revisar los próximos 30 días
         for (let i = 0; i < 30; i++) {
-          const currentDate = new Date(today)
-          currentDate.setDate(today.getDate() + i)
-          const formattedDate = currentDate.toISOString().split('T')[0]
+          const currentDate = new Date(today);
+          currentDate.setDate(today.getDate() + i);
+          const formattedDate = currentDate.toISOString().split('T')[0];
           
-          // Verificar si este día de la semana tiene disponibilidad
-          const dayOfWeek = currentDate.getDay() // 0 = Domingo, 1 = Lunes, ..., 6 = Sábado
-          const dayNames = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"]
-          const dayName = dayNames[dayOfWeek] as keyof TreatmentAvailability
+          const dayOfWeek = currentDate.getDay(); // 0 = domingo, 1 = lunes, etc.
+          const dayNames = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+          const dayName = dayNames[dayOfWeek] as keyof TreatmentAvailability;
           
-          // Buscar si hay disponibilidad para este tratamiento, en este día de la semana y fecha
-          const availableForThisDay = treatmentAvailabilities.some(availability => {
+          // Verificar si hay disponibilidad para esta fecha
+          let availableForThisDay = false;
+          
+          for (const availability of treatmentAvailabilities) {
             // Verificar si la fecha está dentro del rango de disponibilidad
             const dateInRange = 
               availability.start_date <= formattedDate && 
-              availability.end_date >= formattedDate
+              availability.end_date >= formattedDate;
             
             // Verificar si el día de la semana está habilitado
-            const dayEnabled = availability[dayName] === true
+            // Convertir propiedad del día a booleano
+            const isDayEnabled = availability[dayName] === true;
             
-            // Verificar si hay al menos un slot de tiempo disponible
-            const hasAvailableSlot = hasSlotsAvailableForDate(
+            if (!dateInRange || !isDayEnabled) {
+              // Si no cumple con estas condiciones, pasar a la siguiente disponibilidad
+              continue;
+            }
+            
+            // Verificar si hay slots disponibles para esta fecha
+            const hasAvailableSlot = checkSlotsAvailableForDate(
               treatment.id, 
               currentDate, 
               availability, 
               appointments
-            )
+            );
             
-            return dateInRange && dayEnabled && hasAvailableSlot
-          })
+            if (hasAvailableSlot) {
+              console.log(`Fecha disponible encontrada para ${treatment.name}: ${formattedDate}`);
+              console.log(`- Box: ${availability.box}`);
+              console.log(`- Horario: ${availability.start_time} - ${availability.end_time}`);
+              availableForThisDay = true;
+              uniqueDatesSet.add(formattedDate);
+              break; // Si ya encontramos disponibilidad para esta fecha, podemos pasar a la siguiente fecha
+            }
+          }
           
           if (availableForThisDay) {
-            uniqueDatesSet.add(formattedDate)
+            console.log(`Fecha ${formattedDate} disponible para tratamiento ${treatment.id}`);
           }
         }
         
-        // Convertir strings de fecha a objetos Date
-        const uniqueDatesArray = Array.from(uniqueDatesSet).map(dateStr => {
-          const [year, month, day] = dateStr.split('-').map(Number)
-          return new Date(year, month - 1, day)
-        })
+        const uniqueDatesArray = Array.from(uniqueDatesSet);
+        uniqueDatesArray.sort();
         
-        // Ordenar fechas
-        uniqueDatesArray.sort((a, b) => a.getTime() - b.getTime())
+        console.log(`\nResumen para ${treatment.name}:`);
+        console.log(`- Disponibilidades totales: ${treatmentAvailabilities.length}`);
+        console.log(`- Fechas disponibles encontradas: ${uniqueDatesArray.length}`);
+        console.log(`- Primeras fechas: ${uniqueDatesArray.slice(0, 3).join(', ')}`);
         
-        console.log(`Tratamiento ${treatment.id} (${treatment.name}):
-          - Disponibilidades totales: ${treatmentAvailabilities.length}
-          - Fechas disponibles encontradas: ${uniqueDatesArray.length}
-          - Primeras fechas: ${uniqueDatesArray.slice(0, 3).map(d => d.toISOString().split('T')[0]).join(', ')}`);
-        
-        // Guardar fechas disponibles para este tratamiento
-        availableDatesByTreatment[treatment.id] = uniqueDatesArray
+        // Guardar las fechas disponibles para este tratamiento
+        availableDatesByTreatment[treatment.id] = uniqueDatesArray;
       } else {
-        // No hay disponibilidades para este tratamiento
-        availableDatesByTreatment[treatment.id] = []
+        console.log(`No hay disponibilidades para ${treatment.name}`);
+        availableDatesByTreatment[treatment.id] = [];
       }
-    })
+    });
     
+    console.log('\n=== Proceso completado ===');
     console.log('Fechas disponibles procesadas:', Object.keys(availableDatesByTreatment).length);
-    setAvailableDates(availableDatesByTreatment)
-  }
+    console.log('Detalle de fechas por tratamiento:', availableDatesByTreatment);
+    
+    // Actualizar el estado con las fechas disponibles
+    // Uso directo de setAvailableDates para asegurar la actualización del estado
+    setAvailableDates({...availableDatesByTreatment});
+  };
 
   // Verificar si hay slots disponibles para una fecha específica
   const hasSlotsAvailableForDate = (
@@ -336,34 +531,98 @@ export default function Agenda2Page() {
     availability: TreatmentAvailability, 
     appointments: Appointment[]
   ): boolean => {
-    const formattedDate = date.toISOString().split('T')[0]
-    const { start_time, end_time, box } = availability
+    const formattedDate = date.toISOString().split('T')[0];
+    const { start_time, end_time, box } = availability;
     
-    // Convertir horas a minutos para facilitar cálculos
-    const startMinutes = convertTimeToMinutes(start_time)
-    const endMinutes = convertTimeToMinutes(end_time)
+    const startMinutes = convertTimeToMinutes(start_time);
+    const endMinutes = convertTimeToMinutes(end_time);
     
-    // Verificar si hay al menos un slot de 30 minutos disponible
     for (let minutes = startMinutes; minutes < endMinutes; minutes += 30) {
-      const hour = Math.floor(minutes / 60)
-      const minute = minutes % 60
-      const timeStr = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`
+      const hour = Math.floor(minutes / 60);
+      const minute = minutes % 60;
+      const timeStr = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
       
-      // Verificar si ya existe una cita en este horario y box
       const existingAppointment = appointments.find(a => 
         a.date === formattedDate && 
         a.time === timeStr && 
         a.box === box
-      )
+      );
       
-      // Si al menos un slot está disponible, retornar true
       if (!existingAppointment) {
-        return true
+        console.log(`Slot disponible encontrado para tratamiento ${treatmentId}:`);
+        console.log(`- Fecha: ${formattedDate}`);
+        console.log(`- Hora: ${timeStr}`);
+        console.log(`- Box: ${box}`);
+        return true;
       }
     }
     
-    // Si no hay slots disponibles, retornar false
-    return false
+    return false;
+  };
+
+  // Convertir hora (HH:MM) a minutos totales desde medianoche
+  const convertTimeToMinutes = (timeStr: string): number => {
+    const [hours, minutes] = timeStr.split(':').map(Number)
+    return hours * 60 + minutes
+  }
+
+  // Obtener los horarios disponibles para un tratamiento y fecha específicos
+  const getAvailableTimeSlots = (treatmentId: number, date: Date, currentAppointments: Appointment[] = appointments) => {
+    console.log(`[getAvailableTimeSlots] Buscando slots para tratamiento ${treatmentId} en fecha ${date.toISOString().split('T')[0]}`)
+    
+    const formattedDate = date.toISOString().split('T')[0]
+    const treatmentAvailabilities = availabilities.filter(a => a.treatment_id === treatmentId)
+    
+    if (treatmentAvailabilities.length === 0) {
+      console.log("[getAvailableTimeSlots] No hay disponibilidades para este tratamiento")
+      return []
+    }
+
+    const dayOfWeek = date.getDay()
+    const dayNames = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"]
+    const dayName = dayNames[dayOfWeek] as keyof TreatmentAvailability
+    
+    const availabilitiesForThisDay = treatmentAvailabilities.filter(
+      a => a[dayName] === true && 
+           a.start_date <= formattedDate && 
+           a.end_date >= formattedDate
+    )
+    
+    if (availabilitiesForThisDay.length === 0) {
+      console.log(`[getAvailableTimeSlots] No hay disponibilidades para ${dayName} en la fecha ${formattedDate}`)
+      return []
+    }
+
+    const timeSlots: {time: string, box: string}[] = []
+    
+    availabilitiesForThisDay.forEach(availability => {
+      const startMinutes = convertTimeToMinutes(availability.start_time)
+      const endMinutes = convertTimeToMinutes(availability.end_time)
+      
+      for (let minutes = startMinutes; minutes < endMinutes; minutes += 30) {
+        const hour = Math.floor(minutes / 60)
+        const minute = minutes % 60
+        const timeStr = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`
+        
+        const existingAppointment = currentAppointments.find(a => 
+          a.date === formattedDate && 
+          a.time === timeStr && 
+          a.box === availability.box
+        )
+        
+        if (!existingAppointment) {
+          timeSlots.push({
+            time: timeStr,
+            box: availability.box
+          })
+        }
+      }
+    })
+    
+    timeSlots.sort((a, b) => a.time.localeCompare(b.time))
+    
+    console.log(`[getAvailableTimeSlots] Total de slots disponibles: ${timeSlots.length}`)
+    return timeSlots
   }
 
   // Manejar click en fecha
@@ -377,174 +636,57 @@ export default function Agenda2Page() {
       return
     }
 
-    console.log(`[handleDateClick] Fecha seleccionada: ${date.toISOString().split('T')[0]}`);
-    setSelectedDate(date)
+    const dateStr = date.toISOString().split('T')[0]
+    console.log(`[handleDateClick] Fecha seleccionada: ${dateStr}`)
+    setSelectedDate(dateStr)
     
     try {
       // Obtener el tratamiento actual basado en el ID
-      const treatment = treatments.find(t => t.id === selectedTreatment.id);
+      const treatment = treatments.find(t => t.id === selectedTreatment.id)
       if (!treatment) {
-        throw new Error("Tratamiento no encontrado");
+        throw new Error("Tratamiento no encontrado")
       }
       
       // Obtener las citas para la fecha seleccionada
-      const formattedDate = date.toISOString().split('T')[0];
-      console.log(`[handleDateClick] Consultando citas para fecha: ${formattedDate}`);
+      console.log(`[handleDateClick] Consultando citas para fecha: ${dateStr}`)
       
       const { data: dateAppointments, error } = await supabase
         .from('appointments')
         .select('*')
-        .eq('date', formattedDate);
+        .eq('date', dateStr)
         
-      if (error) throw error;
+      if (error) throw error
       
-      console.log(`[handleDateClick] Citas encontradas para la fecha: ${dateAppointments?.length || 0}`);
+      console.log(`[handleDateClick] Citas encontradas para la fecha: ${dateAppointments?.length || 0}`)
       
       // Actualizar estado de citas actuales para el día seleccionado
-      const updatedAppointments = appointments.filter(a => a.date !== formattedDate);
-      const newAppointments = [...updatedAppointments, ...(dateAppointments || [])];
-      setAppointments(newAppointments);
+      const updatedAppointments = appointments.filter(a => a.date !== dateStr)
+      const newAppointments = [...updatedAppointments, ...(dateAppointments || [])]
+      setAppointments(newAppointments)
       
       // Obtener slots disponibles para este tratamiento y fecha
-      const slots = getAvailableTimeSlots(selectedTreatment.id, date, newAppointments);
-      console.log(`[handleDateClick] Slots disponibles encontrados: ${slots.length}`);
+      const slots = getAvailableTimeSlots(selectedTreatment.id, date, newAppointments)
+      console.log(`[handleDateClick] Slots disponibles encontrados: ${slots.length}`)
       
       if (slots.length === 0) {
         toast({
           variant: "destructive",
           title: "Sin disponibilidad",
           description: "No hay horarios disponibles para esta fecha",
-        });
-        return;
+        })
+        return
       }
       
-      setAvailableTimeSlots(slots);
-      setIsTimeDialogOpen(true);
+      setAvailableTimeSlots(slots)
+      setIsTimeDialogOpen(true)
     } catch (error) {
-      console.error("Error al obtener disponibilidad:", error);
+      console.error("Error al obtener disponibilidad:", error)
       toast({
         variant: "destructive",
         title: "Error",
         description: "No se pudo obtener la disponibilidad",
-      });
+      })
     }
-  };
-
-  // Obtener los horarios disponibles para un tratamiento y fecha específicos
-  const getAvailableTimeSlots = (treatmentId: number, date: Date, currentAppointments: Appointment[] = appointments) => {
-    console.log(`[getAvailableTimeSlots] Buscando slots para tratamiento ${treatmentId} en fecha ${date.toISOString().split('T')[0]}`);
-    
-    // Formatear la fecha para comparar con las disponibilidades
-    const formattedDate = date.toISOString().split('T')[0];
-    
-    // Filtrar las disponibilidades para el tratamiento seleccionado
-    const treatmentAvailabilities = availabilities.filter(
-      (a) => a.treatment_id === treatmentId
-    ) as TreatmentAvailability[];
-    console.log(`[getAvailableTimeSlots] Disponibilidades encontradas para este tratamiento: ${treatmentAvailabilities.length}`);
-    
-    if (treatmentAvailabilities.length === 0) {
-      console.log("[getAvailableTimeSlots] No hay disponibilidades para este tratamiento");
-      return [];
-    }
-
-    // Filtrar por día de la semana y por fecha
-    const dayOfWeek = date.getDay(); // 0 = Domingo, 1 = Lunes, ..., 6 = Sábado
-    const dayNames = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
-    const dayName = dayNames[dayOfWeek] as keyof TreatmentAvailability;
-    
-    const availabilitiesForThisDay = treatmentAvailabilities.filter(
-      (a) => a[dayName] === true && 
-             a.start_date <= formattedDate && 
-             a.end_date >= formattedDate
-    );
-    console.log(`[getAvailableTimeSlots] Disponibilidades para ${dayName} y fecha ${formattedDate}: ${availabilitiesForThisDay.length}`);
-    
-    if (availabilitiesForThisDay.length === 0) {
-      console.log(`[getAvailableTimeSlots] No hay disponibilidades para ${dayName} en la fecha ${formattedDate}`);
-      return [];
-    }
-
-    // Crear un conjunto de franjas horarias posibles
-    const timeSlots: TimeSlot[] = [];
-    
-    availabilitiesForThisDay.forEach((availability) => {
-      const startTime = availability.start_time;
-      const endTime = availability.end_time;
-      const box = availability.box;
-      
-      // Generar franjas de 30 minutos desde la hora de inicio hasta la hora de fin
-      let currentTime = startTime;
-      while (currentTime < endTime) {
-        // Parseamos strings de tiempo a objetos Date para poder utilizar addMinutes
-        const currentTimeDate = parseTimeString(currentTime);
-        const endTimeDate = parseTimeString(endTime);
-        
-        // Sumamos 30 minutos
-        const nextTimeDate = addMinutes(currentTimeDate, 30);
-        
-        // Convertimos de nuevo a string para comparar
-        const nextTime = formatTimeDate(nextTimeDate);
-        
-        // Verificar que el horario generado no exceda la hora de fin
-        if (nextTimeDate <= endTimeDate) {
-          // Verificar si el horario ya está ocupado por alguna cita
-          const isSlotTaken = currentAppointments.some(
-            (appointment) => 
-              appointment.date === formattedDate && 
-              appointment.time === currentTime &&
-              appointment.box === box
-          );
-          
-          if (!isSlotTaken) {
-            // Si no está ocupado, agregarlo a las franjas disponibles
-            timeSlots.push({
-              time: currentTime,
-              available: true,
-              box: box
-            });
-          } else {
-            console.log(`[getAvailableTimeSlots] Horario ${currentTime} en ${box} ocupado por cita existente`);
-          }
-        }
-        
-        // Avanzar a la siguiente franja de 30 minutos
-        currentTime = nextTime;
-      }
-    });
-    
-    // Ordenar por hora
-    timeSlots.sort((a, b) => a.time.localeCompare(b.time));
-    
-    // Eliminar duplicados (por si hay solapamiento en las disponibilidades)
-    const uniqueTimeSlots = timeSlots.filter(
-      (slot, index, self) =>
-        index === self.findIndex((s) => s.time === slot.time && s.box === slot.box)
-    );
-    
-    console.log(`[getAvailableTimeSlots] Total de slots disponibles: ${uniqueTimeSlots.length}`);
-    return uniqueTimeSlots;
-  };
-
-  // Función para convertir string de tiempo a Date
-  const parseTimeString = (timeString: string): Date => {
-    const [hours, minutes] = timeString.split(':').map(Number);
-    const date = new Date();
-    date.setHours(hours, minutes, 0, 0);
-    return date;
-  };
-
-  // Función para formatear Date a string de tiempo
-  const formatTimeDate = (date: Date): string => {
-    const hours = date.getHours().toString().padStart(2, '0');
-    const minutes = date.getMinutes().toString().padStart(2, '0');
-    return `${hours}:${minutes}`;
-  };
-
-  // Convertir hora (HH:MM) a minutos totales desde medianoche
-  const convertTimeToMinutes = (timeStr: string): number => {
-    const [hours, minutes] = timeStr.split(':').map(Number)
-    return hours * 60 + minutes
   }
 
   // Preparar para crear una cita en un horario específico
@@ -556,10 +698,14 @@ export default function Agenda2Page() {
   }
 
   // Formatear fecha para mostrar
-  const formatDateForDisplay = (date: Date) => {
-    // Usamos directamente date-fns con locale es
-    return format(date, "EEEE d 'de' MMMM 'de' yyyy", { locale: es })
-      .replace(/^\w/, c => c.toUpperCase()); // Primera letra en mayúscula
+  const formatDateForDisplay = (dateStr: string) => {
+    const date = new Date(dateStr)
+    return date.toLocaleDateString('es-ES', {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric'
+    })
   }
 
   // Crear nuevo cliente
@@ -615,7 +761,7 @@ export default function Agenda2Page() {
 
     try {
       // Obtener la fecha formateada usando el formato nativo de JS
-      const formattedDate = selectedDate.toISOString().split('T')[0];
+      const formattedDate = selectedDate;
       console.log('Guardando cita para fecha:', formattedDate, 'hora:', selectedTime);
 
       // Verificar si el horario ya está ocupado
@@ -676,7 +822,7 @@ export default function Agenda2Page() {
         // Actualizar las pastillas de horarios disponibles si aún estamos trabajando con el mismo tratamiento
         if (selectedTreatment) {
           // Limpiar y actualizar los slots disponibles con los datos más recientes
-          setAvailableTimeSlots(getAvailableTimeSlots(selectedTreatment.id, selectedDate, allAppointments || []));
+          setAvailableTimeSlots(getAvailableTimeSlots(selectedTreatment.id, new Date(selectedDate), allAppointments || []));
         }
       }
       
@@ -708,7 +854,67 @@ export default function Agenda2Page() {
       )}
 
       <div className="flex flex-col items-center">
-        <h2 className="text-2xl font-semibold mb-6">Reservar Turno</h2>
+        <div className="flex justify-between w-full mb-4">
+          <h2 className="text-2xl font-semibold">Reservar Turno</h2>
+          <Button 
+            variant="outline" 
+            size="sm"
+            onClick={async () => {
+              try {
+                setLoading(true);
+                toast({
+                  title: "Actualizando...",
+                  description: "Cargando disponibilidad actualizada"
+                });
+                
+                // Recargar disponibilidades y citas
+                const supabase = getSupabaseClient();
+                const today = new Date();
+                today.setHours(0, 0, 0, 0);
+                const formattedToday = today.toISOString().split('T')[0];
+                
+                // Recargar disponibilidades
+                const { data: availabilitiesData, error: availabilitiesError } = await supabase
+                  .from('treatment_availabilities')
+                  .select('*')
+                  .gte('end_date', formattedToday);
+                
+                if (availabilitiesError) throw availabilitiesError;
+                
+                // Recargar citas
+                const { data: appointmentsData, error: appointmentsError } = await supabase
+                  .from('appointments')
+                  .select('*')
+                  .gte('date', formattedToday);
+                
+                if (appointmentsError) throw appointmentsError;
+                
+                // Actualizar los estados
+                setAvailabilities(availabilitiesData || []);
+                setAppointments(appointmentsData || []);
+                
+                // Volver a procesar las fechas disponibles
+                processAvailableDates(treatments, availabilitiesData || [], appointmentsData || []);
+                
+                toast({
+                  title: "Actualizado",
+                  description: "Disponibilidad actualizada correctamente"
+                });
+              } catch (error) {
+                console.error('Error al actualizar disponibilidad:', error);
+                toast({
+                  title: "Error",
+                  description: "No se pudo actualizar la disponibilidad",
+                  variant: "destructive"
+                });
+              } finally {
+                setLoading(false);
+              }
+            }}
+          >
+            {loading ? "Actualizando..." : "Actualizar disponibilidad"}
+          </Button>
+        </div>
         
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 w-full">
           {treatments.map(treatment => (
@@ -727,25 +933,66 @@ export default function Agenda2Page() {
                 {availableDates[treatment.id] && availableDates[treatment.id].length > 0 ? (
                   <ScrollArea className="h-40">
                     <div className="space-y-2 flex flex-wrap gap-2">
-                      {availableDates[treatment.id].map(date => (
-                        <Badge 
-                          key={date.toISOString()} 
-                          variant="outline"
-                          className="mr-2 mb-2 cursor-pointer hover:bg-primary hover:text-primary-foreground transition-colors py-1 px-3"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            console.log("Fecha seleccionada:", date);
-                            setSelectedTreatment(treatment);
-                            handleDateClick(date);
-                          }}
-                        >
-                          {formatDateForDisplay(date)}
-                        </Badge>
-                      ))}
+                      {availableDates[treatment.id].map(date => {
+                        console.log(`Renderizando fecha ${date} para tratamiento ${treatment.id}`);
+                        return (
+                          <Badge 
+                            key={date} 
+                            variant="outline"
+                            className="mr-2 mb-2 cursor-pointer hover:bg-primary hover:text-primary-foreground transition-colors py-1 px-3"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              console.log("Fecha seleccionada:", date);
+                              setSelectedTreatment(treatment);
+                              handleDateClick(new Date(date));
+                            }}
+                          >
+                            {formatDateForDisplay(date)}
+                          </Badge>
+                        );
+                      })}
                     </div>
                   </ScrollArea>
                 ) : (
-                  <p className="text-sm text-gray-500">No hay fechas disponibles</p>
+                  <div>
+                    <p className="text-sm text-gray-500 mb-2">No hay fechas disponibles</p>
+                    <Button 
+                      variant="outline" 
+                      size="sm"
+                      className="w-full"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        // Forzar una actualización de las fechas disponibles para este tratamiento
+                        console.log("Actualizando fechas para tratamiento:", treatment.id);
+                        // Usar la versión sincrónica para obtener las fechas inmediatamente
+                        const dates = processAvailableDatesSync(
+                          [treatment], 
+                          availabilities.filter(a => a.treatment_id === treatment.id),
+                          appointments
+                        );
+                        // Actualizar el estado solo para este tratamiento
+                        setAvailableDates(prev => ({
+                          ...prev,
+                          [treatment.id]: dates[treatment.id] || []
+                        }));
+                        
+                        if (dates[treatment.id]?.length > 0) {
+                          toast({
+                            title: "Disponibilidad encontrada",
+                            description: `Se encontraron ${dates[treatment.id].length} fechas disponibles`,
+                          });
+                        } else {
+                          toast({
+                            title: "Sin disponibilidad",
+                            description: "No se encontraron fechas disponibles para este tratamiento",
+                            variant: "destructive",
+                          });
+                        }
+                      }}
+                    >
+                      Actualizar disponibilidad
+                    </Button>
+                  </div>
                 )}
               </CardContent>
             </Card>
@@ -793,7 +1040,7 @@ export default function Agenda2Page() {
                   onClick={() => {
                     // Intentar recargar los horarios disponibles
                     if (selectedTreatment && selectedDate) {
-                      const availableSlots = getAvailableTimeSlots(selectedTreatment.id, selectedDate);
+                      const availableSlots = getAvailableTimeSlots(selectedTreatment.id, new Date(selectedDate));
                       setAvailableTimeSlots(availableSlots);
                       
                       if (availableSlots.length === 0) {
@@ -966,7 +1213,7 @@ export default function Agenda2Page() {
                     id="date"
                     name="date"
                     type="date"
-                    defaultValue={selectedDate ? format(selectedDate, "yyyy-MM-dd") : ""}
+                    defaultValue={selectedDate || ""}
                     required
                     readOnly
                   />

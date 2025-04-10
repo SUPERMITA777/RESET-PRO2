@@ -11,7 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogD
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Plus, Pencil, Trash, Calendar, Search } from "lucide-react"
 import { Textarea } from "@/components/ui/textarea"
-import { createSupabaseClient } from "@/lib/supabase/client"
+import { getSupabaseClient } from "@/lib/supabase/client"
 import { useToast } from "@/components/ui/use-toast"
 
 // Mock data for boxes
@@ -21,7 +21,6 @@ interface Treatment {
   id: number
   name: string
   description?: string
-  category?: string
   subtreatments?: Subtreatment[]
   availabilities?: TreatmentAvailability[]
 }
@@ -63,7 +62,7 @@ export default function TreatmentsPage() {
     // Diagnóstico de conexión a Supabase
     const diagnoseSupabaseConnection = async () => {
       try {
-        const supabase = createSupabaseClient()
+        const supabase = getSupabaseClient()
         console.log('Intentando conexión a Supabase...')
         
         // Verificar la URL y la clave de Supabase
@@ -99,44 +98,55 @@ export default function TreatmentsPage() {
   const loadTreatments = async () => {
     try {
       setIsLoading(true)
-      const supabase = createSupabaseClient()
+      const supabase = getSupabaseClient()
+      
+      console.log('Cargando tratamientos...')
       
       // Cargar tratamientos
       const { data: treatmentsData, error: treatmentsError } = await supabase
         .from('treatments')
         .select('*')
       
-      if (treatmentsError) throw treatmentsError
-      console.log('Tratamientos cargados:', treatmentsData)
+      if (treatmentsError) {
+        console.error('Error cargando tratamientos:', treatmentsError)
+        throw treatmentsError
+      }
+      console.log('Tratamientos cargados:', treatmentsData?.length || 0)
 
       // Cargar subtratamientos
+      console.log('Cargando subtratamientos...')
       const { data: subtreatmentsData, error: subtreatmentsError } = await supabase
         .from('subtreatments')
         .select('*')
       
-      if (subtreatmentsError) throw subtreatmentsError
-      console.log('Subtratamientos cargados:', subtreatmentsData)
+      if (subtreatmentsError) {
+        console.error('Error cargando subtratamientos:', subtreatmentsError)
+        throw subtreatmentsError
+      }
+      console.log('Subtratamientos cargados:', subtreatmentsData?.length || 0)
 
       // Cargar disponibilidades
+      console.log('Cargando disponibilidades...')
       const { data: availabilitiesData, error: availabilitiesError } = await supabase
         .from('treatment_availabilities')
         .select('*')
       
       if (availabilitiesError) {
-        console.error('Error al cargar disponibilidades:', availabilitiesError)
+        console.error('Error cargando disponibilidades:', availabilitiesError)
         throw availabilitiesError
       }
       
-      console.log('Disponibilidades cargadas:', availabilitiesData)
+      console.log('Disponibilidades cargadas:', availabilitiesData?.length || 0)
 
       // Combinar datos
+      console.log('Procesando datos...')
       const fullTreatments = treatmentsData.map(treatment => ({
         ...treatment,
         subtreatments: subtreatmentsData.filter(st => st.treatment_id === treatment.id) || [],
         availabilities: availabilitiesData.filter(a => a.treatment_id === treatment.id) || []
       }))
 
-      console.log('Tratamientos con relaciones:', fullTreatments)
+      console.log('Datos procesados correctamente')
 
       setTreatments(fullTreatments)
       setFilteredTreatments(fullTreatments)
@@ -144,7 +154,7 @@ export default function TreatmentsPage() {
       console.error('Error loading treatments:', error)
       toast({
         title: "Error",
-        description: "No se pudieron cargar los tratamientos",
+        description: error instanceof Error ? error.message : "No se pudieron cargar los tratamientos",
         variant: "destructive",
       })
     } finally {
@@ -163,8 +173,7 @@ export default function TreatmentsPage() {
     const filtered = treatments.filter(
       (treatment) =>
         treatment.name.toLowerCase().includes(term) ||
-        (treatment.description || "").toLowerCase().includes(term) ||
-        (treatment.category || "").toLowerCase().includes(term)
+        (treatment.description || "").toLowerCase().includes(term)
     )
     setFilteredTreatments(filtered)
   }, [treatments, searchTerm])
@@ -181,14 +190,13 @@ export default function TreatmentsPage() {
     setIsLoading(true)
 
     try {
-      const supabase = createSupabaseClient()
+      const supabase = getSupabaseClient()
       const formData = new FormData(e.target as HTMLFormElement)
+      
+      // Solo incluir los campos que pertenecen a la tabla treatments
       const treatmentData = {
         name: formData.get("name") as string,
-        description: formData.get("description") as string,
-        category: formData.get("category") as string,
-        subtreatments: [],
-        availabilities: []
+        description: formData.get("description") as string
       }
 
       if (selectedTreatment) {
@@ -198,11 +206,20 @@ export default function TreatmentsPage() {
           .update(treatmentData)
           .eq('id', selectedTreatment.id)
 
-        if (error) throw error
+        if (error) {
+          console.error('Error en actualización:', error)
+          throw error
+        }
 
         // Update local state
         setTreatments(treatments.map(treatment => 
-          treatment.id === selectedTreatment.id ? { ...treatment, ...treatmentData } : treatment
+          treatment.id === selectedTreatment.id ? { 
+            ...treatment, 
+            ...treatmentData,
+            // Mantener las relaciones existentes
+            subtreatments: treatment.subtreatments,
+            availabilities: treatment.availabilities
+          } : treatment
         ))
 
         toast({
@@ -217,10 +234,17 @@ export default function TreatmentsPage() {
           .select()
           .single()
 
-        if (error) throw error
+        if (error) {
+          console.error('Error en inserción:', error)
+          throw error
+        }
 
         // Update local state
-        setTreatments([...treatments, data])
+        setTreatments([...treatments, {
+          ...data,
+          subtreatments: [],
+          availabilities: []
+        }])
 
         toast({
           title: "Éxito",
@@ -247,7 +271,7 @@ export default function TreatmentsPage() {
     setIsLoading(true)
 
     try {
-      const supabase = createSupabaseClient()
+      const supabase = getSupabaseClient()
       const { error } = await supabase
         .from('treatments')
         .delete()
@@ -288,7 +312,7 @@ export default function TreatmentsPage() {
     setIsLoading(true)
 
     try {
-      const supabase = createSupabaseClient()
+      const supabase = getSupabaseClient()
       const formData = new FormData(e.target as HTMLFormElement)
       const subtreatmentData = {
         treatment_id: currentTreatmentId,
@@ -365,7 +389,7 @@ export default function TreatmentsPage() {
   // Handle delete subtreatment
   const handleDeleteSubtreatment = async (treatmentId: number, subtreatmentId: number) => {
     try {
-      const supabase = createSupabaseClient()
+      const supabase = getSupabaseClient()
       const { error } = await supabase
         .from('subtreatments')
         .delete()
@@ -416,7 +440,7 @@ export default function TreatmentsPage() {
         throw new Error("El tratamiento seleccionado no existe")
       }
 
-      const supabase = createSupabaseClient()
+      const supabase = getSupabaseClient()
       const formData = new FormData(e.target as HTMLFormElement)
       
       // Validar y formatear los datos
@@ -451,16 +475,20 @@ export default function TreatmentsPage() {
 
       console.log('Datos a enviar:', availabilityData)
 
-      // Verificar que la tabla existe
-      const { error: tableCheckError } = await supabase
-        .from('treatment_availabilities')
-        .select('count')
-        .limit(1)
-        .single()
-
-      if (tableCheckError) {
-        console.error('Error verificando tabla:', tableCheckError)
-        throw new Error(`La tabla treatment_availabilities no existe o no está accesible: ${tableCheckError.message}`)
+      try {
+        // Verificar que la tabla existe
+        const { error: tableCheckError } = await supabase
+          .from('treatment_availabilities')
+          .select('count')
+          .limit(1)
+        
+        if (tableCheckError) {
+          console.error('Error verificando tabla:', tableCheckError)
+          throw new Error(`La tabla treatment_availabilities no existe o no está accesible: ${tableCheckError.message}`)
+        }
+      } catch (error) {
+        console.error('Error al verificar la tabla de disponibilidades:', error)
+        // Continuar con la ejecución, ya que podría ser un problema temporal o de permisos
       }
 
       if (selectedAvailability) {
@@ -548,7 +576,7 @@ export default function TreatmentsPage() {
   // Handle delete availability
   const handleDeleteAvailability = async (treatmentId: number, availabilityId: number) => {
     try {
-      const supabase = createSupabaseClient()
+      const supabase = getSupabaseClient()
       const { error } = await supabase
         .from('treatment_availabilities')
         .delete()
@@ -619,7 +647,6 @@ export default function TreatmentsPage() {
                   <TableRow>
                     <TableHead>Nombre</TableHead>
                     <TableHead>Descripción</TableHead>
-                    <TableHead>Categoría</TableHead>
                     <TableHead>Disponibilidad</TableHead>
                     <TableHead className="text-right">Acciones</TableHead>
                   </TableRow>
@@ -629,7 +656,6 @@ export default function TreatmentsPage() {
                     <TableRow key={treatment.id}>
                       <TableCell className="font-medium">{treatment.name}</TableCell>
                       <TableCell>{treatment.description}</TableCell>
-                      <TableCell>{treatment.category}</TableCell>
                       <TableCell>
                         <Button
                           variant="outline"
@@ -828,16 +854,6 @@ export default function TreatmentsPage() {
                   name="description"
                   defaultValue={selectedTreatment?.description}
                   placeholder="Descripción del tratamiento"
-                />
-              </div>
-
-              <div className="grid gap-2">
-                <Label htmlFor="category">Categoría</Label>
-                <Input
-                  id="category"
-                  name="category"
-                  defaultValue={selectedTreatment?.category}
-                  required
                 />
               </div>
             </div>
